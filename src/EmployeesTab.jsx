@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { employeesCollection } from "./firebase.js";
+import Card from "./components/Card.jsx";
 
 import {
   addDoc,
@@ -110,23 +111,24 @@ export default function EmployeesTab() {
 
   return (
     <div>
-      <section id="add-employee-form" style={{ marginBottom: 24 }}>
-        <h2>Add New Employee</h2>
-        <input
-          placeholder="Name *"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-        />
-        <input
-          placeholder="ID"
-          value={newId}
-          onChange={(e) => setNewId(e.target.value)}
-        />
-        <input
-          placeholder="Date of Birth"
-          value={newDob}
-          onChange={(e) => setNewDob(e.target.value)}
-        />
+      <Card title="Add New Employee" style={{ marginBottom: 24 }}>
+        <div className="two-col">
+          <input
+            placeholder="Name *"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <input
+            placeholder="ID"
+            value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+          />
+          <input
+            placeholder="Date of Birth"
+            value={newDob}
+            onChange={(e) => setNewDob(e.target.value)}
+          />
+        </div>
         <input
           placeholder="Role *"
           value={newRole}
@@ -138,81 +140,87 @@ export default function EmployeesTab() {
           onChange={(e) => setNewDetails(e.target.value)}
           rows={3}
         />
-        <button onClick={addEmployee}>Add Employee</button>
-      </section>
+        <button type="button" onClick={addEmployee}>Add Employee</button>
+      </Card>
 
       <section id="employees-list">
         <h2>Existing Employees</h2>
         <ul style={{ listStyle: "none", padding: 0 }}>
           {employees.map((emp) => (
-            <li
-              key={emp.docId}
-              style={{
-                padding: 16,
-                marginBottom: 12,
-                border: "1px solid #5b21b6",
-                borderRadius: 8,
-              }}
-            >
-              {editingId === emp.docId ? (
-                <>
-                  <input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Name *"
-                  />
-                  <input
-                    value={editId}
-                    onChange={(e) => setEditId(e.target.value)}
-                    placeholder="ID"
-                  />
-                  <input
-                    value={editDob}
-                    onChange={(e) => setEditDob(e.target.value)}
-                    placeholder="Date of Birth"
-                  />
-                  <input
-                    value={editRole}
-                    onChange={(e) => setEditRole(e.target.value)}
-                    placeholder="Role *"
-                  />
-                  <textarea
-                    value={editDetails}
-                    onChange={(e) => setEditDetails(e.target.value)}
-                    placeholder="Details *"
-                    rows={3}
-                  />
-                  <button onClick={saveEdit} style={{ marginRight: 10 }}>
-                    Save
-                  </button>
-                  <button onClick={() => setEditingId(null)}>Cancel</button>
-                </>
-              ) : (
-                <>
-                  <strong>{emp.name}</strong> - <em>{emp.role}</em>
-                  <br />
-                  <small>ID: {emp.id || "-"}</small>
-                  <br />
-                  <small>DOB: {emp.dob || "-"}</small>
-                  <br />
-                  <p>{emp.details || "-"}</p>
-                  <button onClick={() => startEditing(emp)}>Edit</button>
-                  <button
-                    onClick={() => deleteEmployee(emp.docId)}
-                    style={{
-                      marginLeft: 10,
-                      backgroundColor: "#e11d48",
-                      color: "#fff",
-                    }}
-                  >
-                    Delete
-                  </button>
-                </>
-              )}
+            <li key={emp.docId} style={{ marginBottom: 12 }}>
+              <Card title={emp.name} subtitle={emp.role} className="employee-card">
+                {editingId === emp.docId ? (
+                  <>
+                    <input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="Name *"
+                    />
+                    <input
+                      value={editId}
+                      onChange={(e) => setEditId(e.target.value)}
+                      placeholder="ID"
+                    />
+                    <input
+                      value={editDob}
+                      onChange={(e) => setEditDob(e.target.value)}
+                      placeholder="Date of Birth"
+                    />
+                    <input
+                      value={editRole}
+                      onChange={(e) => setEditRole(e.target.value)}
+                      placeholder="Role *"
+                    />
+                    <textarea
+                      value={editDetails}
+                      onChange={(e) => setEditDetails(e.target.value)}
+                      placeholder="Details *"
+                      rows={3}
+                    />
+                    <button onClick={saveEdit} style={{ marginRight: 10 }}>
+                      Save
+                    </button>
+                    <button onClick={() => setEditingId(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <div className="field-row">
+                      <div className="field-label">ID</div>
+                      <div className="field-value">{emp.id || "-"}</div>
+                    </div>
+                    <div className="field-row">
+                      <div className="field-label">DOB</div>
+                      <div className="field-value">{emp.dob || "-"}</div>
+                    </div>
+                    <div className="field-row">
+                      <div className="field-label">Details</div>
+                      <div className="field-value">{emp.details || "-"}</div>
+                    </div>
+                    <div className="field-row">
+                      <div className="field-label">Added</div>
+                      <div className="field-value">{formatDate(emp.createdAt)}</div>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <button type="button" onClick={() => startEditing(emp)}>Edit</button>
+                      <button type="button" className="delete-btn" onClick={() => deleteEmployee(emp.docId)} >Delete</button>
+                    </div>
+                  </>
+                )}
+              </Card>
             </li>
           ))}
         </ul>
       </section>
     </div>
   );
+}
+
+function formatDate(input) {
+  if (!input) return "-";
+  try {
+    const d = typeof input.toDate === "function" ? input.toDate() : new Date(input);
+    return d.toLocaleString();
+  } catch (e) {
+    return String(input);
+  }
 }

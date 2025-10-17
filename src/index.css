@@ -7,6 +7,8 @@ body {
   max-width: 900px;
   margin: 0 auto;
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Headings */
@@ -22,11 +24,12 @@ h1, h2 {
   padding: 24px;
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(128, 90, 213, 0.4); /* purple glow */
-  transition: box-shadow 0.3s ease;
+  transition: box-shadow 0.3s ease, transform 0.15s ease;
 }
 #login-screen:hover,
 #dashboard-screen:hover {
   box-shadow: 0 6px 24px rgba(147, 51, 234, 0.6);
+  transform: translateY(-2px);
 }
 
 /* Inputs & Buttons */
@@ -64,6 +67,99 @@ button {
 }
 button:hover {
   background-color: #a855f7;
+}
+
+/* Card utility */
+.card {
+  background: #1e0e32;
+  padding: 16px;
+  border: 1px solid #5b21b6;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(147, 51, 234, 0.12);
+}
+
+.card-header strong {
+  font-size: 1.02rem;
+  color: #f3e8ff;
+}
+.card-header div {
+  margin-top: 2px;
+  color: #c4b5fd;
+  font-size: 0.9rem;
+}
+.card-body p {
+  margin: 0.4rem 0 0.6rem 0;
+}
+.card-footer {
+  border-top: 1px dashed rgba(255,255,255,0.03);
+  padding-top: 8px;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+.field-label {
+  min-width: 90px;
+  color: #c4b5fd;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.field-value {
+  color: #e9d5ff;
+  flex: 1;
+  word-break: break-word;
+}
+
+/* Slightly different emphasis for subtitles (role/status) */
+.card-header em, .card-header .subtitle {
+  color: #c4b5fd;
+}
+
+/* Tab buttons */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tab-button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.tab-button[aria-pressed="true"],
+.tab-button.active {
+  background: linear-gradient(90deg, #6d28d9, #a855f7);
+  color: #fff;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* Accessible focus outlines */
+.tab-button:focus,
+button:focus,
+input:focus,
+textarea:focus {
+  outline: 3px solid rgba(192, 132, 252, 0.28);
+  outline-offset: 2px;
+}
+
+/* Two-column form inputs for wider screens */
+@media (min-width: 640px) {
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .two-col input,
+  .two-col textarea {
+    margin: 0;
+  }
 }
 
 /* Feed Form & List */

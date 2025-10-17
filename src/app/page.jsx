@@ -70,41 +70,41 @@ export default function App() {
   }
 
   return (
-    <div
-      id="dashboard-screen"
-      style={{ maxWidth: 900, margin: "auto", marginTop: 50 }}
-    >
+    <div id="dashboard-screen" style={{ maxWidth: 900, margin: "auto", marginTop: 50 }}>
       <h1>SHIELD Admin Panel</h1>
-      <nav style={{ marginBottom: 20 }}>
+      <nav style={{ marginBottom: 20 }} className="tabs" role="tablist" aria-label="Main tabs">
         <button
+          className={`tab-button ${activeTab === "feeds" ? "active" : ""}`}
+          aria-pressed={activeTab === "feeds"}
           onClick={() => setActiveTab("feeds")}
-          style={{
-            marginRight: 10,
-            fontWeight: activeTab === "feeds" ? "bold" : "normal",
-          }}
         >
           Feeds
         </button>
         <button
+          className={`tab-button ${activeTab === "wanteds" ? "active" : ""}`}
+          aria-pressed={activeTab === "wanteds"}
           onClick={() => setActiveTab("wanteds")}
-          style={{
-            marginRight: 10,
-            fontWeight: activeTab === "wanteds" ? "bold" : "normal",
-          }}
         >
           Wanteds
         </button>
         <button
+          className={`tab-button ${activeTab === "employees" ? "active" : ""}`}
+          aria-pressed={activeTab === "employees"}
           onClick={() => setActiveTab("employees")}
-          style={{ fontWeight: activeTab === "employees" ? "bold" : "normal" }}
         >
           Employees
         </button>
       </nav>
-      <button onClick={handleLogout}>Logout</button>
-      {activeTab === "feeds" && <FeedsTab />}
-      {activeTab === "wanteds" && <WantedsTab />}
-      {activeTab === "employees" && <EmployeesTab />}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <button  onClick={handleLogout}>Logout</button>
+      </div>
+
+      <div>
+        {activeTab === "feeds" && <FeedsTab />}
+        {activeTab === "wanteds" && <WantedsTab />}
+        {activeTab === "employees" && <EmployeesTab />}
+      </div>
     </div>
   );
 }

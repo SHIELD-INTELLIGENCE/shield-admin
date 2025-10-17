@@ -1,6 +1,7 @@
 "use client"; // Mark component as client-side in Next.js 13+
 
 import React, { useState, useEffect } from "react";
+import Card from "./components/Card.jsx";
 import {
   feedsCollection,
   usersCollection,
@@ -107,8 +108,7 @@ export default function FeedsTab() {
 
   return (
     <div>
-      <section id="new-feed-form">
-        <h2>Create new feed</h2>
+      <Card title="Create new feed" className="" style={{ marginBottom: 8 }}>
         <input
           placeholder="Title"
           value={title}
@@ -127,64 +127,54 @@ export default function FeedsTab() {
                 type="checkbox"
                 checked={selectedEmails.includes(email)}
                 onChange={() => toggleEmail(email)}
-              />{" "}
-              {email}
+              /> {email}
             </label>
           ))}
         </div>
-        <button onClick={createFeed}>Create Feed</button>
-      </section>
+        <button type="button" onClick={createFeed}>Create Feed</button>
+      </Card>
 
       <section id="feeds-list" style={{ marginTop: 24 }}>
         <h2>Existing Feeds</h2>
         <ul style={{ listStyle: "none", padding: 0 }}>
           {feeds.map((feed) => (
-            <li
-              key={feed.id}
-              style={{
-                background: "#1e0e32",
-                padding: 16,
-                marginBottom: 12,
-                border: "1px solid #5b21b6",
-                borderRadius: 8,
-                boxShadow: "0 1px 4px rgba(147, 51, 234, 0.2)",
-              }}
-            >
-              <strong>{feed.title}</strong>
-              <span
-                className={`status-label ${feed.status}`}
-                style={{
-                  marginLeft: 8,
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  fontSize: "0.75rem",
-                  fontWeight: "600",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
-                  backgroundColor:
-                    feed.status === "done" ? "#10b981" : "#facc15",
-                  color: feed.status === "done" ? "#0c0a09" : "#3f0d42",
-                }}
-              >
-                {feed.status}
-              </span>
-              <p style={{ marginTop: 8 }}>{feed.body}</p>
-              <small>
-                Assigned to: {feed.assignedTo?.join(", ") || "No one"}
-              </small>
-              <div
-                className="feed-btns"
-                style={{ marginTop: 10, display: "flex", gap: 10 }}
-              >
-                {feed.status !== "done" && (
-                  <button onClick={() => markDone(feed.id)}>Mark as Done</button>
-                )}
-                <button onClick={() => deleteFeed(feed.id)}>Delete</button>
-              </div>
+            <li key={feed.id} style={{ marginBottom: 12 }}>
+              <Card title={feed.title} subtitle={feed.status} className="feed-card">
+                <p style={{ marginTop: 8 }}>{feed.body}</p>
+                <div className="field-row">
+                  <div className="field-label">Assigned to</div>
+                  <div className="field-value">{feed.assignedTo?.length ? feed.assignedTo.join(", ") : "No one"}</div>
+                </div>
+                <div className="field-row">
+                  <div className="field-label">Status</div>
+                  <div className="field-value"><span className={`status-label ${feed.status}`}>{feed.status}</span></div>
+                </div>
+                <div className="field-row">
+                  <div className="field-label">Created</div>
+                  <div className="field-value">{formatDate(feed.createdAt)}</div>
+                </div>
+                <div className="feed-btns">
+                  {feed.status !== "done" && (
+                    <button type="button" className="done-btn" onClick={() => markDone(feed.id)}>Mark as Done</button>
+                  )}
+                  <button type="button" className="delete-btn" onClick={() => deleteFeed(feed.id)}>Delete</button>
+                </div>
+              </Card>
             </li>
           ))}
         </ul>
       </section>
     </div>
   );
+}
+
+function formatDate(input) {
+  if (!input) return "-";
+  // Firestore Timestamp has toDate(), or could be a JS Date
+  try {
+    const d = typeof input.toDate === "function" ? input.toDate() : new Date(input);
+    return d.toLocaleString();
+  } catch (e) {
+    return String(input);
+  }
 }

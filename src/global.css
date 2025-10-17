@@ -1,0 +1,4 @@
+@import './index.css';
+
+/* This file exists so components that import "./global.css" resolve correctly.
+   The actual styles live in index.css. */

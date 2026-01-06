@@ -34,7 +34,7 @@ export default function FeedsTab() {
         const emailsSet = new Set();
         const emails = [];
         snapshot.forEach((doc) => {
-          const email = doc.data().email;
+          const email = doc.data().email || doc.id;
           if (email && !emailsSet.has(email)) {
             emailsSet.add(email);
             emails.push(email);

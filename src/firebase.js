@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_API_KEY,
@@ -9,10 +10,11 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 const feedsCollection = collection(db, "feeds");
 const usersCollection = collection(db, "users");
 const wantedsCollection = collection(db, "wanteds");
 const employeesCollection = collection(db, "employees");
 
-export { db, feedsCollection, usersCollection, wantedsCollection, employeesCollection };
+export { auth, db, feedsCollection, usersCollection, wantedsCollection, employeesCollection };

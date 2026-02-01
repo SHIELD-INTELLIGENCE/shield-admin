@@ -1,15 +1,17 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import FeedsTab from "../FeedsTab.jsx";
-import EmployeesTab from "../EmployeesTab.jsx";
-import WantedsTab from "../WantedTab.jsx";
-import UsersTab from "../UsersTab.jsx";
-import "./global.css";
+import FeedsTab from "../Tabs/FeedsTab.jsx";
+import EmployeesTab from "../Tabs/EmployeesTab.jsx";
+import WantedsTab from "../Tabs/WantedTab.jsx";
+import UsersTab from "../Tabs//UsersTab.jsx";
+import JoinApplicationsTab from "../Tabs/JoinApplicationsTab.jsx";
+import ServiceRequestsTab from "../Tabs/ServiceRequestsTab.jsx";
+import "../global.css";
 
 import { auth, db, usersCollection } from "../firebase.js";
 
-import { doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
+import { doc, getDoc, getDocs, limit, query, where, collection, onSnapshot, deleteDoc } from "firebase/firestore";
 
 import {
   onAuthStateChanged,
@@ -53,6 +55,8 @@ async function isAuthUserAdmin(user) {
 }
 
 export default function App() {
+  const [joinApplicationsData, setJoinApplicationsData] = useState([]);
+  const [serviceRequestsData, setServiceRequestsData] = useState([]);
   const [loggedIn, setLoggedIn] = useState(false);
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
@@ -65,6 +69,56 @@ export default function App() {
   function toggleTab(tabKey) {
     setActiveTab((prev) => (prev === tabKey ? "" : tabKey));
   }
+
+  useEffect(() => {
+    // realtime listeners for joinApplications and serviceRequests
+    const joinCol = collection(db, "joinApplications");
+    const unsubJoin = onSnapshot(
+      joinCol,
+      (snap) => {
+        const arr = snap.docs.map((d) => {
+          const dd = d.data() || {};
+          return {
+            id: d.id,
+            ...dd,
+            createdAt: dd.createdAt && typeof dd.createdAt.toDate === "function"
+              ? dd.createdAt.toDate().toISOString()
+              : dd.createdAt || new Date().toISOString(),
+          };
+        });
+        setJoinApplicationsData(arr);
+      },
+      (err) => {
+        console.error("joinApplications snapshot error:", err);
+      }
+    );
+
+    const servCol = collection(db, "serviceRequests");
+    const unsubServ = onSnapshot(
+      servCol,
+      (snap) => {
+        const arr = snap.docs.map((d) => {
+          const dd = d.data() || {};
+          return {
+            id: d.id,
+            ...dd,
+            createdAt: dd.createdAt && typeof dd.createdAt.toDate === "function"
+              ? dd.createdAt.toDate().toISOString()
+              : dd.createdAt || new Date().toISOString(),
+          };
+        });
+        setServiceRequestsData(arr);
+      },
+      (err) => {
+        console.error("serviceRequests snapshot error:", err);
+      }
+    );
+
+    return () => {
+      try { unsubJoin(); } catch (e) {}
+      try { unsubServ(); } catch (e) {}
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,9 +208,31 @@ export default function App() {
     setActiveTab("feeds");
   }
 
+  async function handleDeleteJoinApplication(id) {
+    if (!id) return;
+    try {
+      await deleteDoc(doc(db, "joinApplications", id));
+      setNotice("Join application deleted.");
+    } catch (e) {
+      console.error("Failed to delete join application:", e);
+      setError("Failed to delete application.");
+    }
+  }
+
+  async function handleDeleteServiceRequest(id) {
+    if (!id) return;
+    try {
+      await deleteDoc(doc(db, "serviceRequests", id));
+      setNotice("Service request deleted.");
+    } catch (e) {
+      console.error("Failed to delete service request:", e);
+      setError("Failed to delete request.");
+    }
+  }
+
   if (checkingSession) {
     return (
-      <div style={{ maxWidth: 400, margin: "auto", marginTop: 50 }}>
+      <div style={{ maxWidth: 400, marginLeft: "auto", marginRight: "auto", marginTop: 50 }}>
         <p>Checking session...</p>
       </div>
     );
@@ -166,7 +242,7 @@ export default function App() {
     return (
       <div
         id="login-screen"
-        style={{ maxWidth: 400, margin: "auto", marginTop: 50 }}
+        style={{ maxWidth: 400, marginLeft: "auto", marginRight: "auto", marginTop: 50 }}
       >
         <h2>Admin Login</h2>
         <input
@@ -246,6 +322,20 @@ export default function App() {
         >
           Users
         </button>
+        <button
+          className={`tab-button ${activeTab === "joinApplications" ? "active" : ""}`}
+          aria-pressed={activeTab === "joinApplications"}
+          onClick={() => toggleTab("joinApplications")}
+        >
+          Join Applications
+        </button>
+        <button
+          className={`tab-button ${activeTab === "serviceRequests" ? "active" : ""}`}
+          aria-pressed={activeTab === "serviceRequests"}
+          onClick={() => toggleTab("serviceRequests")}
+        >
+          Service Requests
+        </button>
       </nav>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -257,6 +347,12 @@ export default function App() {
         {activeTab === "wanteds" && <WantedsTab />}
         {activeTab === "employees" && <EmployeesTab />}
         {activeTab === "users" && <UsersTab />}
+        {activeTab === "joinApplications" && (
+          <JoinApplicationsTab data={joinApplicationsData} onDelete={handleDeleteJoinApplication} />
+        )}
+        {activeTab === "serviceRequests" && (
+          <ServiceRequestsTab data={serviceRequestsData} onDelete={handleDeleteServiceRequest} />
+        )}
       </div>
     </div>
   );

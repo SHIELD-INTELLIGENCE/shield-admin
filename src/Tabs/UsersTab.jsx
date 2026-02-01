@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Card from "./components/Card.jsx";
-import { usersCollection } from "./firebase.js";
+import Card from "../components/Card.jsx";
+import { usersCollection } from "../firebase.js";
+import CustomDropdown from "../components/CustomDropdown";
+import "../global.css";
 
 import {
   deleteDoc,
@@ -127,13 +129,12 @@ export default function UsersTab() {
             value={newEmail}
             onChange={(e) => setNewEmail(e.target.value)}
           />
-          <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
-            {ROLE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <CustomDropdown
+            options={ROLE_OPTIONS}
+            selected={newRole}
+            onChange={(value) => setNewRole(value)}
+            placeholder="Select Role"
+          />
         </div>
         <button type="button" onClick={addUser} disabled={!newEmail.trim()}>
           Add User
@@ -148,17 +149,16 @@ export default function UsersTab() {
               <Card title={u.email} subtitle={(u.role || "user").toUpperCase()}>
                 {editingId === u.docId ? (
                   <>
-                    <select value={editRole} onChange={(e) => setEditRole(e.target.value)}>
-                      {ROLE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button type="button" onClick={saveEdit} style={{ marginRight: 10 }}>
+                    <CustomDropdown
+                      options={ROLE_OPTIONS}
+                      selected={editRole}
+                      onChange={(value) => setEditRole(value)}
+                      placeholder="Select Role"
+                    />
+                    <button onClick={saveEdit} style={{ marginRight: 10 }}>
                       Save
                     </button>
-                    <button type="button" onClick={() => setEditingId(null)}>
+                    <button onClick={() => setEditingId(null)}>
                       Cancel
                     </button>
                   </>
@@ -183,6 +183,7 @@ export default function UsersTab() {
                   </>
                 )}
               </Card>
+              <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #6b21a8' }} />
             </li>
           ))}
         </ul>

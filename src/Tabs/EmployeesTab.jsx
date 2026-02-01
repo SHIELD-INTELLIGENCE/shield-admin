@@ -1,8 +1,8 @@
 "use client"; // Mark as client component for Next.js 13+ App Router
 
 import React, { useState, useEffect } from "react";
-import { employeesCollection } from "./firebase.js";
-import Card from "./components/Card.jsx";
+import { employeesCollection } from "../firebase.js";
+import Card from "../components/Card.jsx";
 
 import {
   addDoc,

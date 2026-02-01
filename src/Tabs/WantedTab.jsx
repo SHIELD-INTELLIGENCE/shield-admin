@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import Card from "./components/Card.jsx";
-import { wantedsCollection } from "./firebase.js";
+import Card from "../components/Card.jsx";
+import { wantedsCollection } from "../firebase.js";
 import {
   addDoc,
   updateDoc,
@@ -20,6 +20,18 @@ export default function WantedTab() {
   const [editReason, setEditReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [showRankingInfo, setShowRankingInfo] = useState(false);
+
+  // Disable dashboard elevation while ranking info modal is open to avoid hover flicker
+  useEffect(() => {
+    const el = document.getElementById("dashboard-screen");
+    if (!el) return;
+    if (showRankingInfo) {
+      el.classList.add("no-elevate");
+    } else {
+      el.classList.remove("no-elevate");
+    }
+    return () => el.classList.remove("no-elevate");
+  }, [showRankingInfo]);
 
   useEffect(() => {
     const q = query(wantedsCollection, orderBy("createdAt", "desc"));
@@ -284,7 +296,6 @@ export default function WantedTab() {
             <li key={wanted.id} style={{ marginBottom: 12 }}>
               <Card
                 title={wanted.name}
-                subtitle={wanted.reason}
                 className="wanted-card"
               >
                 {editingId === wanted.id ? (
@@ -343,6 +354,7 @@ export default function WantedTab() {
                   </>
                 )}
               </Card>
+              <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #6b21a8' }} />
             </li>
           ))}
         </ul>

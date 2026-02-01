@@ -1,11 +1,11 @@
 "use client"; // Mark component as client-side in Next.js 13+
 
 import React, { useState, useEffect } from "react";
-import Card from "./components/Card.jsx";
+import Card from "../components/Card.jsx";
 import {
   feedsCollection,
   usersCollection,
-} from "./firebase.js";
+} from "../firebase.js";
 
 import {
   collection,
@@ -160,6 +160,7 @@ export default function FeedsTab() {
                   <button type="button" className="delete-btn" onClick={() => deleteFeed(feed.id)}>Delete</button>
                 </div>
               </Card>
+              <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #6b21a8' }} />
             </li>
           ))}
         </ul>

@@ -1,4 +1,695 @@
-@import './index.css';
+/* Base Styles */
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  padding: 24px;
+  background-color: #0a0615; /* deep purple-black */
+  color: #f4eaff; /* soft light purple */
+  max-width: 900px;
+  margin: 0 auto;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
-/* This file exists so components that import "./global.css" resolve correctly.
-   The actual styles live in index.css. */
+/* Headings */
+h1, h2 {
+  color: #d8b4fe;
+  margin-top: 0;
+}
+
+/* Card Containers */
+#login-screen,
+#dashboard-screen {
+  background: #1b0f2e; /* dark mystic plum */
+  padding: 24px;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(128, 90, 213, 0.4); /* purple glow */
+  transition: box-shadow 0.3s ease, transform 0.15s ease;
+}
+#login-screen:hover,
+#dashboard-screen:hover {
+  box-shadow: 0 6px 24px rgba(147, 51, 234, 0.6);
+  transform: translateY(-2px);
+}
+#login-screen:hover {
+  box-shadow: 0 6px 24px rgba(147, 51, 234, 0.6);
+  transform: translateY(-2px);
+}
+
+/* When a modal overlay is open we disable elevation hover to avoid flicker */
+#dashboard-screen.no-elevate,
+#dashboard-screen.no-elevate:hover {
+  box-shadow: 0 4px 16px rgba(128, 90, 213, 0.4);
+  transform: none !important;
+}
+
+/* Inputs & Buttons */
+input,
+textarea,
+button {
+  font-size: 1rem;
+  padding: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  background-color: #140b1e;
+  color: #e9d5ff;
+  border: 1px solid #5b21b6;
+  border-radius: 6px;
+}
+
+/* Add spacing between stacked inputs/textareas inside card bodies */
+.card-body > input,
+.card-body > textarea {
+  margin-bottom: 10px;
+}
+
+/* Ensure grid blocks inside cards have spacing from following fields */
+.card-body > .two-col {
+  margin-bottom: 10px;
+}
+
+/* Give buttons inside card body a little separation from fields */
+.card-body > button {
+  margin-top: 8px;
+}
+
+/* Buttons placed inside wrapper divs in cards (e.g. Edit/Delete) should not be full-width */
+.card-body > div > button {
+  width: auto;
+  display: inline-block;
+  margin-right: 10px;
+}
+.card-body > div > button:last-child {
+  margin-right: 0;
+}
+
+
+input:focus,
+textarea:focus {
+  outline: 3px solid rgba(192, 132, 252, 0.28);
+  outline-offset: 2px;
+}
+
+
+/* Primary Button */
+button {
+  background-color: #9333ea; /* vivid purple */
+  color: #fdf4ff;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.25s ease;
+}
+button:hover {
+  background-color: #a855f7;
+}
+
+/* Card utility */
+.card {
+  background: #1e0e32;
+  padding: 16px;
+  border: 1px solid #5b21b6;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(147, 51, 234, 0.12);
+}
+
+.card-header strong {
+  font-size: 1.02rem;
+  color: #f3e8ff;
+}
+.card-header div {
+  margin-top: 2px;
+  color: inherit; /* keep subtitle neutral; emphasize actual values instead */
+  font-size: 0.9rem;
+}
+.card-body p {
+  margin: 0.4rem 0 0.6rem 0;
+}
+.card-footer {
+  border-top: 1px dashed rgba(255,255,255,0.03);
+  padding-top: 8px;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+.field-label {
+  min-width: 90px;
+  color: #c4b5fd;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.field-value {
+  color: #e9d5ff;
+  flex: 1;
+  word-break: break-word;
+}
+
+/* Color the actual field values inside application/request cards (not the subtitle) */
+.application-card .value,
+.request-card .value {
+  color: #e9d5ff;
+  font-weight: 600;
+}
+.application-card p strong {
+  color: #c4b5fd;      /* softer lavender */
+  font-weight: 600;
+}
+
+.application-card p {
+  color: #e9d5ff;
+  opacity: 0.92;
+}
+.application-card p + p {
+  margin-top: 6px;
+}
+
+/* Slightly different emphasis for subtitles (role/status) */
+.card-header em, .card-header .subtitle {
+  color: #c4b5fd;
+}
+
+/* Tab buttons */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tab-button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.tab-button[aria-pressed="true"],
+.tab-button.active {
+  background: linear-gradient(90deg, #6d28d9, #a855f7);
+  color: #fff;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* Accessible focus outlines */
+.tab-button:focus,
+button:focus,
+input:focus,
+textarea:focus{
+  outline: 3px solid rgba(192, 132, 252, 0.28);
+  outline-offset: 2px;
+}
+
+/* Two-column form inputs for wider screens */
+@media (min-width: 640px) {
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .two-col input,
+  .two-col textarea{
+    margin: 0;
+  }
+}
+
+/* Feed Form & List */
+#new-feed-form,
+#feeds-list {
+  margin-top: 24px;
+}
+
+/* Recipients List */
+#recipients-list h3 {
+  font-size: 1rem;
+  margin-bottom: 8px;
+  color: #f3e8ff;
+}
+
+#recipients-list label {
+  display: flex;
+  align-items: center;
+  background: #2e1a47;
+  border: 1px solid #6b21a8;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+#recipients-list label:hover {
+  background-color: #4c1d95;
+  border-color: #7e22ce;
+}
+#recipients-list input[type="checkbox"] {
+  margin-right: 10px;
+  transform: scale(1.2);
+  accent-color: #c084fc;
+}
+
+/* Feed List */
+#feeds-container {
+  list-style: none;
+  padding: 0;
+  margin-top: 16px;
+}
+#feeds-container li {
+  background: #1e0e32;
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid #5b21b6;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(147, 51, 234, 0.2);
+}
+#feeds-container li strong {
+  font-size: 1rem;
+  color: #f3e8ff;
+}
+#feeds-container li small {
+  display: block;
+  margin-top: 6px;
+  color: #c4b5fd;
+  font-size: 0.875rem;
+}
+
+/* Status Labels */
+.status-label {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 0.5rem;
+}
+.status-label.pending {
+  background-color: #facc15;
+  color: #3f0d42;
+}
+.status-label.done {
+  background-color: #10b981;
+  color: #0c0a09;
+}
+
+/* Feed Buttons */
+.feed-btns {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+}
+.feed-btns .delete-btn,
+.feed-btns .done-btn {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+.feed-btns .delete-btn {
+  background-color: #e11d48;
+  color: #fff0f9;
+}
+.feed-btns .delete-btn:hover {
+  background-color: #be123c;
+}
+.feed-btns .done-btn {
+  background-color: #10b981;
+  color: #0f172a;
+}
+.feed-btns .done-btn:hover {
+  background-color: #059669;
+}
+
+/* Wanted List Styling */
+#wanteds-tab {
+  margin-top: 24px;
+}
+
+#wanted-list-container {
+  list-style: none;
+  padding: 0;
+  margin-top: 16px;
+}
+
+#wanted-list-container li {
+  background: #1e0e32;
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid #5b21b6;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(147, 51, 234, 0.2);
+  text-align: left;
+  color: #f4eaff;
+  position: relative;
+}
+
+#wanted-list-container li strong {
+  color: #f3e8ff;
+}
+
+#wanted-list-container button {
+  margin-top: 8px;
+  margin-right: 10px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+#wanted-list-container button:hover {
+  opacity: 0.9;
+}
+
+#wanted-list-container button:first-of-type {
+  background-color: #10b981;
+  color: #0f172a;
+}
+#wanted-list-container button:first-of-type:hover {
+  background-color: #059669;
+}
+
+#wanted-list-container button:last-of-type {
+  background-color: #e11d48;
+  color: #fff0f9;
+}
+#wanted-list-container button:last-of-type:hover {
+  background-color: #be123c;
+}
+
+/* Wanted Input Form */
+#wanteds-tab input {
+  display: inline-block;
+  width: calc(50% - 12px);
+  margin-right: 8px;
+}
+
+#wanteds-tab input:last-of-type {
+  margin-right: 0;
+}
+
+#wanteds-tab button {
+  margin-top: 10px;
+}
+.wanted-edit input {
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.wanted-edit button {
+  width: 100%;
+  font-size: 0.85rem;
+}
+.wanted-edit input {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.wanted-edit .feed-btns {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* Dropdown styling */
+select {
+  background-color: #4b0082; /* Dark purple background */
+  color: #ffffff; /* White text */
+  border: 2px solid #8a2be2; /* Bright purple border */
+  border-radius: 5px; /* Rounded corners */
+  padding: 10px;
+  font-size: 16px;
+  outline: none;
+  cursor: pointer;
+}
+
+select:hover {
+  background-color: #5a2c91; /* Slightly lighter purple on hover */
+}
+
+select:focus {
+  border-color: #dda0dd; /* Light purple border on focus */
+  box-shadow: 0 0 5px #dda0dd; /* Glow effect */
+}
+
+option {
+  background-color: #4b0082; /* Dark purple background */
+  color: #ffffff; /* White text */
+}
+/* Basic controls and card styles for tabs */
+.tab-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 12px 0 18px;
+}
+.search-input {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  min-width: 220px;
+}
+.select {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  background: white;
+}
+.result-count {
+  margin-left: auto;
+  color: #6b21a8;
+  font-weight: 600;
+}
+.application-card,
+.request-card {
+  background: linear-gradient(
+    180deg,
+    rgba(36, 18, 58, 0.95),
+    rgba(22, 11, 34, 0.98)
+  );
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+
+  border: 1px solid rgba(147, 51, 234, 0.35);
+
+  box-shadow:
+    0 2px 8px rgba(88, 28, 135, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.6);
+
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.25s ease;
+}
+
+/* Typography inside application/request cards */
+.application-card p,
+.request-card p {
+  margin: 8px 0;
+  color: #e9d5ff;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.application-card p strong,
+.request-card p strong {
+  color: #c4b5fd;
+  display: inline-block;
+  min-width: 120px;
+  font-weight: 700;
+}
+
+.application-card h3,
+.request-card h3 {
+  margin: 0 0 6px 0;
+  font-size: 1.02rem;
+  color: #f3e8ff;
+}
+
+.application-card .created,
+.request-card .created {
+  color: #c4b5fd;
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+/* Colored accents and improved hierarchy for application/request cards */
+.application-card {
+  border-left: 4px solid rgba(167,139,250,0.18);
+}
+.request-card {
+  border-left: 4px solid rgba(59,130,246,0.12);
+}
+
+.application-card p.label,
+.request-card p.label {
+  color: #d6bcfa;
+}
+
+.application-card p.value,
+.request-card p.value {
+  color: #e9d5ff;
+}
+
+.application-card:hover,
+.request-card:hover {
+  transform: translateY(-6px);
+  box-shadow:
+   0 6px 24px rgba(147, 51, 234, 0.45),
+   0 0 0 1px rgba(216, 180, 254, 0.25);
+}
+
+/* Muted small text for meta fields */
+.application-card .meta,
+.request-card .meta {
+  color: #b9a6e6;
+  font-size: 0.9rem;
+}
+
+/* Make interests and long lists easier to scan */
+.application-card .long-text,
+.request-card .long-text {
+  color: #e6ddff;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+/* Badge styles for source/status */
+.badge {
+  display: inline-block;
+  padding: 6px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #fff;
+}
+.badge.source-join-us { background: linear-gradient(90deg,#10b981,#34d399); }
+.badge.source-request-service { background: linear-gradient(90deg,#3b82f6,#60a5fa); }
+.badge.source-unknown { background: linear-gradient(90deg,#9ca3af,#6b7280); }
+.badge.accepted-yes { background: linear-gradient(90deg,#16a34a,#4ade80); }
+.badge.accepted-no { background: linear-gradient(90deg,#dc2626,#f87171); }
+
+/* Fallback generic badge */
+.badge:not([class*="source-"]) { background: rgba(147,51,234,0.6); }
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.menu-container { position: relative; }
+.menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: 24px;
+  background: white;
+  border: 1px solid #eee;
+  padding: 6px;
+  border-radius: 6px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.06);
+}
+.menu-item { display: block; padding: 6px 8px; }
+.custom-dropdown {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.dropdown-header {
+  background-color: #4b0082; /* Dark purple background */
+  color: #ffffff; /* White text */
+  border: 2px solid #8a2be2; /* Bright purple border */
+  border-radius: 5px;
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dropdown-header.open {
+  border-color: #dda0dd; /* Light purple border on open */
+  box-shadow: 0 0 5px #dda0dd; /* Glow effect */
+}
+
+.dropdown-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background-color: #4b0082; /* Dark purple background */
+  border: 2px solid #8a2be2; /* Bright purple border */
+  border-radius: 5px;
+  margin-top: 5px;
+  z-index: 10;
+  list-style: none;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dropdown-item {
+  padding: 10px;
+  color: #ffffff; /* White text */
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.dropdown-item:hover {
+  background-color: #5a2c91; /* Slightly lighter purple on hover */
+}
+
+.menu-container {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.menu-icon {
+  cursor: pointer;
+  font-size: 1.5rem;
+  color: #ffffff;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background-color: #1e1e2f;
+  border: 1px solid #6b21a8;
+  border-radius: 5px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+  padding: 8px 0;
+  min-width: 120px;
+}
+
+.menu-item {
+  display: block;
+  padding: 8px 16px;
+  color: #e11d48;
+  text-align: left;
+  text-decoration: none;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.menu-item:hover {
+  background-color: #5a2c91;
+  color: #ffffff;
+}

@@ -11,7 +11,7 @@ import "../global.css";
 
 import { auth, db, usersCollection } from "../firebase.js";
 
-import { doc, getDoc, getDocs, limit, query, where, collection, onSnapshot, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, getDocs, limit, query, where, collection, onSnapshot, deleteDoc, updateDoc } from "firebase/firestore";
 
 import {
   onAuthStateChanged,
@@ -230,6 +230,19 @@ export default function App() {
     }
   }
 
+  async function handleUpdateServiceRequestPlan(id, newPlan) {
+    if (!id || !newPlan) return;
+    try {
+      await updateDoc(doc(db, "serviceRequests", id), {
+        plan: newPlan,
+      });
+      setNotice("Service request plan updated.");
+    } catch (e) {
+      console.error("Failed to update service request plan:", e);
+      setError("Failed to update plan.");
+    }
+  }
+
   if (checkingSession) {
     return (
       <div style={{ maxWidth: 400, marginLeft: "auto", marginRight: "auto", marginTop: 50 }}>
@@ -351,7 +364,11 @@ export default function App() {
           <JoinApplicationsTab data={joinApplicationsData} onDelete={handleDeleteJoinApplication} />
         )}
         {activeTab === "serviceRequests" && (
-          <ServiceRequestsTab data={serviceRequestsData} onDelete={handleDeleteServiceRequest} />
+          <ServiceRequestsTab 
+            data={serviceRequestsData} 
+            onDelete={handleDeleteServiceRequest}
+            onUpdatePlan={handleUpdateServiceRequestPlan}
+          />
         )}
       </div>
     </div>

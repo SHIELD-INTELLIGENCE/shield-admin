@@ -1,16 +1,54 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import '../global.css';
 import CustomDropdown from '../components/CustomDropdown.jsx';
 
-const ServiceRequestsTab = ({ data = [], onDelete }) => {
+const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [query, setQuery] = useState('');
   const [filterSource, setFilterSource] = useState('any');
   const [filterAccepted, setFilterAccepted] = useState('any');
+  const [filterPlan, setFilterPlan] = useState('any');
   const [sortBy, setSortBy] = useState('createdDesc');
+  const [updatePlanModal, setUpdatePlanModal] = useState(null);
+  const [newPlan, setNewPlan] = useState('');
 
   const toggleMenu = (index) => {
     setMenuOpen(menuOpen === index ? null : index);
+  };
+
+  // Disable dashboard elevation while modal is open to avoid hover flicker
+  useEffect(() => {
+    const el = document.getElementById('dashboard-screen');
+    if (!el) return;
+    if (updatePlanModal) {
+      el.classList.add('no-elevate');
+    } else {
+      el.classList.remove('no-elevate');
+    }
+    return () => el.classList.remove('no-elevate');
+  }, [updatePlanModal]);
+
+  const handleUpdatePlan = (request) => {
+    setUpdatePlanModal(request);
+    setNewPlan(request.plan || '');
+    setMenuOpen(null);
+  };
+
+  const confirmUpdatePlan = async () => {
+    if (!updatePlanModal || !onUpdatePlan) return;
+    
+    try {
+      await onUpdatePlan(updatePlanModal.id, newPlan);
+      setUpdatePlanModal(null);
+      setNewPlan('');
+    } catch (error) {
+      alert('Failed to update plan. Please try again.');
+    }
+  };
+
+  const cancelUpdatePlan = () => {
+    setUpdatePlanModal(null);
+    setNewPlan('');
   };
 
   const sources = useMemo(() => {
@@ -33,12 +71,15 @@ const ServiceRequestsTab = ({ data = [], onDelete }) => {
         if (filterAccepted === 'no' && accepted) return false;
       }
 
+      if (filterPlan !== 'any' && (req.plan || '') !== filterPlan) return false;
+
       if (!q) return true;
 
       const hay = [
         req.name,
         req.email,
         req.preferredContact,
+        req.otherContacts,
         req.requirements,
         req.projectReference,
       ]
@@ -63,7 +104,7 @@ const ServiceRequestsTab = ({ data = [], onDelete }) => {
     }
 
     return arr;
-  }, [data, query, filterSource, filterAccepted, sortBy]);
+  }, [data, query, filterSource, filterAccepted, filterPlan, sortBy]);
 
   return (
     <div className="service-requests-tab">
@@ -86,6 +127,19 @@ const ServiceRequestsTab = ({ data = [], onDelete }) => {
           selected={filterAccepted}
           onChange={(v) => setFilterAccepted(v)}
           placeholder="Accepted"
+        />
+
+        <CustomDropdown
+          options={[
+            { value: 'any', label: 'Any Plan' },
+            { value: 'Starter Plan', label: 'Starter Plan' },
+            { value: 'Premium Plan', label: 'Premium Plan' },
+            { value: 'Elite Plan', label: 'Elite Plan' },
+            { value: 'To be discussed', label: 'To be discussed' },
+          ]}
+          selected={filterPlan}
+          onChange={(v) => setFilterPlan(v)}
+          placeholder="Plan"
         />
 
         <CustomDropdown
@@ -140,6 +194,13 @@ const ServiceRequestsTab = ({ data = [], onDelete }) => {
                     <div className="menu-dropdown">
                       <span
                         className="menu-item"
+                        onClick={() => handleUpdatePlan(request)}
+                        style={{ cursor: 'pointer', color: '#6b21a8' }}
+                      >
+                        Update Plan
+                      </span>
+                      <span
+                        className="menu-item"
                         onClick={() => onDelete(request.id)}
                         style={{ cursor: 'pointer', color: 'red' }}
                       >
@@ -153,8 +214,11 @@ const ServiceRequestsTab = ({ data = [], onDelete }) => {
 
             <p><strong>Email:</strong> <span className="value">{request.email}</span></p>
             <p><strong>Preferred Contact:</strong> <span className="value">{request.preferredContact}</span></p>
+            {request.otherContacts && (
+              <p><strong>Other Contacts:</strong> <span className="value">{request.otherContacts}</span></p>
+            )}
             <p><strong>Service Type:</strong> <span className="value">{request.serviceType}</span></p>
-            <p><strong>Budget:</strong> <span className="value">{request.budget}</span></p>
+            <p><strong>Plan:</strong> <span className="value">{request.plan}</span></p>
             <p><strong>Project Reference:</strong> <span className="value">{request.projectReference}</span></p>
             <p><strong>Requirements:</strong> <span className="value">{request.requirements}</span></p>
             <p><strong>Education:</strong> <span className="value">{request.education}</span></p>
@@ -179,6 +243,67 @@ const ServiceRequestsTab = ({ data = [], onDelete }) => {
           </div>
         );
       })}
+
+      {/* Update Plan Modal */}
+      {updatePlanModal && (
+        <div className="modal-overlay" onClick={cancelUpdatePlan}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Update Plan</h3>
+            <p style={{ marginBottom: '16px', color: '#a78bfa' }}>
+              Update the plan for <strong>{updatePlanModal.name}</strong>
+            </p>
+            
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+              Select New Plan:
+            </label>
+            <div style={{ marginBottom: '20px' }}>
+              <CustomDropdown
+                options={[
+                  { value: '', label: 'Select a Plan' },
+                  { value: 'Starter Plan', label: 'Starter Plan' },
+                  { value: 'Premium Plan', label: 'Premium Plan' },
+                  { value: 'Elite Plan', label: 'Elite Plan' },
+                  { value: 'To be discussed', label: 'To be discussed' },
+                ]}
+                selected={newPlan}
+                onChange={(value) => setNewPlan(value)}
+                placeholder="Select a Plan"
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={cancelUpdatePlan}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmUpdatePlan}
+                disabled={!newPlan}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: newPlan ? '#6b21a8' : '#333',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  cursor: newPlan ? 'pointer' : 'not-allowed',
+                  opacity: newPlan ? 1 : 0.5,
+                }}
+              >
+                Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

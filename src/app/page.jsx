@@ -19,6 +19,38 @@ import {
   signOut,
 } from "firebase/auth";
 
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+function getAuthErrorMessage(error) {
+  const code = error?.code || "";
+
+  if (code === "auth/invalid-credential") {
+    return "Invalid credentials or Email/Password sign-in is disabled in Firebase Auth.";
+  }
+  if (code === "auth/invalid-email") {
+    return "Invalid email format.";
+  }
+  if (code === "auth/user-disabled") {
+    return "This account is disabled.";
+  }
+  if (code === "auth/user-not-found" || code === "auth/wrong-password") {
+    return "Incorrect email or password.";
+  }
+  if (code === "auth/invalid-api-key") {
+    return "Invalid Firebase API key. Check NEXT_PUBLIC_API_KEY in .env.local and rebuild.";
+  }
+  if (code === "auth/network-request-failed") {
+    return "Network error. Check your internet connection and try again.";
+  }
+  if (code === "auth/too-many-requests") {
+    return "Too many failed attempts. Please wait a bit and try again.";
+  }
+
+  return "Login failed. Check your email/password and Firebase Auth setup.";
+}
+
 function normalizeEmail(email) {
   return String(email || "")
     .trim()
@@ -170,7 +202,15 @@ export default function App() {
       unsubscribe();
     };
   }, []);
-
+  const handleUpdateStatus = async (id, updates) => {
+  try {
+    const docRef = doc(db, "serviceRequests", id);
+    await updateDoc(docRef, updates);
+    console.log("SHIELD Database Sync: Success");
+  } catch (error) {
+    console.error("SHIELD Database Sync: Failed", error);
+  }
+};
   async function handleLogin() {
     if (isLoggingIn) return;
 
@@ -183,13 +223,27 @@ export default function App() {
       return;
     }
 
+    if (!isValidEmail(normalizedEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+
+    if (!password.trim()) {
+      setError("Enter your password.");
+      return;
+    }
+
     try {
       setIsLoggingIn(true);
       await signInWithEmailAndPassword(auth, normalizedEmail, password);
       // onAuthStateChanged will finish gating + redirecting.
     } catch (e) {
-      console.error("Login failed:", e);
-      setError("Login failed. Check email/password and try again.");
+      console.error("Login failed:", {
+        code: e?.code,
+        message: e?.message,
+        email: normalizedEmail,
+      });
+      setError(getAuthErrorMessage(e));
     } finally {
       setIsLoggingIn(false);
     }
@@ -368,6 +422,7 @@ export default function App() {
             data={serviceRequestsData} 
             onDelete={handleDeleteServiceRequest}
             onUpdatePlan={handleUpdateServiceRequestPlan}
+            onUpdateStatus={handleUpdateStatus}
           />
         )}
       </div>

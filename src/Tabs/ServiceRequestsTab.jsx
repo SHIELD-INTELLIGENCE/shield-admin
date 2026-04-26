@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import '../global.css';
 import CustomDropdown from '../components/CustomDropdown.jsx';
 
-const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
+const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [query, setQuery] = useState('');
   const [filterSource, setFilterSource] = useState('any');
@@ -34,9 +34,30 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
     setMenuOpen(null);
   };
 
+  // MANAGEMENT ACTIONS
+  const updateStatus = async (id, newStatus) => {
+    await onUpdateStatus(id, { requesterStatus: newStatus });
+    setMenuOpen(null);
+  };
+
+  const handleMakeLive = async (request) => {
+    // Logic: 90 days for quarterly, 30 for monthly/default
+    const isQuarterly = request.billingCycle?.toLowerCase().includes('quarterly');
+    const days = isQuarterly ? 90 : 30;
+    
+    const renewalDate = new Date();
+    renewalDate.setDate(renewalDate.getDate() + days);
+
+    await onUpdateStatus(request.id, { 
+      requesterStatus: 'Active',
+      liveDate: new Date().toISOString(),
+      renewalDate: renewalDate.toISOString()
+    });
+    setMenuOpen(null);
+  };
+
   const confirmUpdatePlan = async () => {
     if (!updatePlanModal || !onUpdatePlan) return;
-    
     try {
       await onUpdatePlan(updatePlanModal.id, newPlan);
       setUpdatePlanModal(null);
@@ -45,19 +66,11 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
       alert('Failed to update plan. Please try again.');
     }
   };
-
+  
   const cancelUpdatePlan = () => {
     setUpdatePlanModal(null);
     setNewPlan('');
   };
-
-  const sources = useMemo(() => {
-    const set = new Set();
-    (data || []).forEach((d) => {
-      if (d.source) set.add(d.source);
-    });
-    return Array.from(set);
-  }, [data]);
 
   const filtered = useMemo(() => {
     const q = String(query || '').trim().toLowerCase();
@@ -82,6 +95,8 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
         req.otherContacts,
         req.requirements,
         req.projectReference,
+        req.requesterStatus,
+        req.billingCycle
       ]
         .join(' ')
         .toLowerCase();
@@ -94,13 +109,9 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
     } else if (sortBy === 'createdDesc') {
       arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     } else if (sortBy === 'nameAsc') {
-      arr.sort((a, b) =>
-        String(a.name || '').localeCompare(String(b.name || ''))
-      );
+      arr.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     } else if (sortBy === 'nameDesc') {
-      arr.sort((a, b) =>
-        String(b.name || '').localeCompare(String(a.name || ''))
-      );
+      arr.sort((a, b) => String(b.name || '').localeCompare(String(a.name || '')));
     }
 
     return arr;
@@ -113,7 +124,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
       <div className="tab-controls">
         <input
           className="search-input"
-          placeholder="Search name, email, service type, requirements..."
+          placeholder="Search name, email, status, requirements..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -159,27 +170,16 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
 
       {filtered.map((request, index) => {
         const src = String(request.source || 'unknown');
-        const srcClass = `source-${src
-          .replace(/[^a-z0-9]+/gi, '-')
-          .toLowerCase()}`;
+        const srcClass = `source-${src.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
+        const isOverdue = request.renewalDate && new Date(request.renewalDate) < new Date();
 
         return (
-          <div key={request.id || index} className="request-card">
+          <div key={request.id || index} className={`request-card ${isOverdue ? 'card-overdue' : ''}`}>
             <div className="card-header">
               <h3>{request.name}</h3>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className={`badge ${srcClass}`}>{src}</span>
-
-                {request.acceptedTerms !== undefined && (
-                  <span
-                    className={`badge accepted-${
-                      request.acceptedTerms ? 'yes' : 'no'
-                    }`}
-                  >
-                    {request.acceptedTerms ? 'Accepted' : 'Not Accepted'}
-                  </span>
-                )}
 
                 <div className="menu-container">
                   <span
@@ -192,20 +192,14 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
 
                   {menuOpen === index && (
                     <div className="menu-dropdown">
-                      <span
-                        className="menu-item"
-                        onClick={() => handleUpdatePlan(request)}
-                        style={{ cursor: 'pointer', color: '#6b21a8' }}
-                      >
-                        Update Plan
-                      </span>
-                      <span
-                        className="menu-item"
-                        onClick={() => onDelete(request.id)}
-                        style={{ cursor: 'pointer', color: 'red' }}
-                      >
-                        Delete
-                      </span>
+                      {/* PIPELINE ACTIONS */}
+                      <span className="menu-item" onClick={() => updateStatus(request.id, 'Negotiating')}>Negotiating</span>
+                      <span className="menu-item" onClick={() => updateStatus(request.id, 'Building')}>Building</span>
+                      <span className="menu-item" onClick={() => updateStatus(request.id, 'In Review')}>In Review</span>
+                      <span className="menu-item" onClick={() => handleMakeLive(request)} style={{color: '#10b981'}}>Go Live (Paid)</span>
+                      <hr className="menu-divider" />
+                      <span className="menu-item" onClick={() => handleUpdatePlan(request)}>Update Plan</span>
+                      <span className="menu-item" onClick={() => onDelete(request.id)} style={{ color: 'red' }}>Delete</span>
                     </div>
                   )}
                 </div>
@@ -219,9 +213,15 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
             )}
             <p><strong>Service Type:</strong> <span className="value">{request.serviceType}</span></p>
             <p><strong>Plan:</strong> <span className="value">{request.plan}</span></p>
+            <p><strong>Billing Cycle:</strong> <span className="value">{request.billingCycle || 'Standard'}</span></p>
             <p><strong>Project Reference:</strong> <span className="value">{request.projectReference}</span></p>
             <p><strong>Requirements:</strong> <span className="value">{request.requirements}</span></p>
-            <p><strong>Education:</strong> <span className="value">{request.education}</span></p>
+            <p><strong>Status:</strong> <span className="value" style={{color: isOverdue ? '#ff4d4d' : '#a78bfa', fontWeight: 'bold'}}>{request.requesterStatus || 'Lead'}</span></p>
+            
+            {request.renewalDate && (
+              <p><strong>Next Renewal:</strong> <span className="value" style={{color: isOverdue ? '#ff4d4d' : '#10b981'}}>{new Date(request.renewalDate).toLocaleDateString()}</span></p>
+            )}
+
             <p><strong>Date:</strong> <span className="value">{request.date}</span></p>
             <p><strong>Source:</strong> <span className="value">{request.source}</span></p>
             <p>
@@ -233,29 +233,18 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
               <span className="value">{request.createdAt ? new Date(request.createdAt).toLocaleString() : '—'}</span>
             </p>
 
-            <hr
-              style={{
-                margin: '16px 0',
-                border: 'none',
-                borderTop: '1px solid #6b21a8',
-              }}
-            />
+            <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #6b21a8' }} />
           </div>
         );
       })}
 
-      {/* Update Plan Modal */}
+      {/* Modal remains identical to your original code */}
       {updatePlanModal && (
         <div className="modal-overlay" onClick={cancelUpdatePlan}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Update Plan</h3>
-            <p style={{ marginBottom: '16px', color: '#a78bfa' }}>
-              Update the plan for <strong>{updatePlanModal.name}</strong>
-            </p>
-            
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
-              Select New Plan:
-            </label>
+            <p style={{ marginBottom: '16px', color: '#a78bfa' }}>Update the plan for <strong>{updatePlanModal.name}</strong></p>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Select New Plan:</label>
             <div style={{ marginBottom: '20px' }}>
               <CustomDropdown
                 options={[
@@ -270,36 +259,9 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan }) => {
                 placeholder="Select a Plan"
               />
             </div>
-
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={cancelUpdatePlan}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '6px',
-                  color: '#fff',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmUpdatePlan}
-                disabled={!newPlan}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: newPlan ? '#6b21a8' : '#333',
-                  border: 'none',
-                  borderRadius: '6px',
-                  color: '#fff',
-                  cursor: newPlan ? 'pointer' : 'not-allowed',
-                  opacity: newPlan ? 1 : 0.5,
-                }}
-              >
-                Update
-              </button>
+              <button onClick={cancelUpdatePlan} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={confirmUpdatePlan} disabled={!newPlan} style={{ padding: '10px 20px', backgroundColor: newPlan ? '#6b21a8' : '#333', border: 'none', borderRadius: '6px', color: '#fff', cursor: newPlan ? 'pointer' : 'not-allowed', opacity: newPlan ? 1 : 0.5 }}>Update</button>
             </div>
           </div>
         </div>

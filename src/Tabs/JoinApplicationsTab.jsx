@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import '../global.css';
 import CustomDropdown from '../components/CustomDropdown.jsx';
 
-const JoinApplicationsTab = ({ data = [], onDelete }) => {
+const JoinApplicationsTab = ({ data = [], onDelete, onUpdateStatus }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [query, setQuery] = useState('');
   const [filterSource, setFilterSource] = useState('any');
@@ -13,13 +13,11 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
     setMenuOpen(menuOpen === index ? null : index);
   };
 
-  const sources = useMemo(() => {
-    const set = new Set();
-    (data || []).forEach((d) => {
-      if (d.source) set.add(d.source);
-    });
-    return Array.from(set);
-  }, [data]);
+  // Status Update Handler
+  const updateAppStatus = async (id, newStatus) => {
+    await onUpdateStatus(id, { applicationStatus: newStatus });
+    setMenuOpen(null);
+  };
 
   const filtered = useMemo(() => {
     const q = String(query || '').trim().toLowerCase();
@@ -41,6 +39,7 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
         app.email,
         app.contact,
         app.reason,
+        app.applicationStatus, // Added status to search
         ...(app.interests || []),
       ]
         .join(' ')
@@ -73,7 +72,7 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
       <div className="tab-controls">
         <input
           className="search-input"
-          placeholder="Search name, email, contact, reason..."
+          placeholder="Search name, status, interests..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -106,9 +105,8 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
 
       {filtered.map((application, index) => {
         const src = String(application.source || 'unknown');
-        const srcClass = `source-${src
-          .replace(/[^a-z0-9]+/gi, '-')
-          .toLowerCase()}`;
+        const srcClass = `source-${src.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
+        const currentStatus = application.applicationStatus || 'Applied';
 
         return (
           <div key={application.id || index} className="application-card">
@@ -117,16 +115,6 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className={`badge ${srcClass}`}>{src}</span>
-
-                {application.acceptedTerms !== undefined && (
-                  <span
-                    className={`badge accepted-${
-                      application.acceptedTerms ? 'yes' : 'no'
-                    }`}
-                  >
-                    {application.acceptedTerms ? 'Accepted' : 'Not Accepted'}
-                  </span>
-                )}
 
                 <div className="menu-container">
                   <span
@@ -139,6 +127,11 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
 
                   {menuOpen === index && (
                     <div className="menu-dropdown">
+                      {/* RECRUITMENT PIPELINE */}
+                      <span className="menu-item" onClick={() => updateAppStatus(application.id, 'Vetting')}>Move to Vetting</span>
+                      <span className="menu-item" onClick={() => updateAppStatus(application.id, 'Interviewing')}>Interviewing</span>
+                      <span className="menu-item" onClick={() => updateAppStatus(application.id, 'Accepted')} style={{color: '#10b981'}}>Accept Member</span>
+                      <hr className="menu-divider" />
                       <span
                         className="menu-item"
                         onClick={() => onDelete(application.id)}
@@ -152,10 +145,10 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
               </div>
             </div>
 
+            <p><strong>Status:</strong> <span className="value" style={{color: '#a78bfa', fontWeight: 'bold'}}>{currentStatus}</span></p>
             <p><strong>Email:</strong> <span className="value">{application.email}</span></p>
             <p><strong>Contact:</strong> <span className="value">{application.contact}</span></p>
             <p><strong>Date of Birth:</strong> <span className="value">{application.dob}</span></p>
-            <p><strong>Education:</strong> <span className="value">{application.education}</span></p>
             <p>
               <strong>Interests:</strong>{' '}
               <span className="value">{(application.interests || []).join(', ')}</span>
@@ -172,13 +165,7 @@ const JoinApplicationsTab = ({ data = [], onDelete }) => {
               <span className="value">{application.createdAt ? new Date(application.createdAt).toLocaleString() : '—'}</span>
             </p>
 
-            <hr
-              style={{
-                margin: '16px 0',
-                border: 'none',
-                borderTop: '1px solid #6b21a8',
-              }}
-            />
+            <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #6b21a8' }} />
           </div>
         );
       })}

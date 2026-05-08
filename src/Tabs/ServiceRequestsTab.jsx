@@ -1,6 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import '../global.css';
 import CustomDropdown from '../components/CustomDropdown.jsx';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase.js';
+
+// Tier limits configuration
+const TIER_LIMITS = {
+  'Starter Plan': { largeCommits: 1, smallChanges: 3 },
+  'Premium Plan': { largeCommits: 4, smallChanges: 6 },
+  'Elite Plan': { largeCommits: 8, smallChanges: null }, // null = unlimited
+  'To be discussed': { largeCommits: 0, smallChanges: 0 },
+};
 
 const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus }) => {
   const [menuOpen, setMenuOpen] = useState(null);
@@ -11,6 +21,8 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
   const [sortBy, setSortBy] = useState('createdDesc');
   const [updatePlanModal, setUpdatePlanModal] = useState(null);
   const [newPlan, setNewPlan] = useState('');
+  const [creditModal, setCreditModal] = useState(null);
+  const [requestCredits, setRequestCredits] = useState({});
 
   const toggleMenu = (index) => {
     setMenuOpen(menuOpen === index ? null : index);
@@ -28,10 +40,87 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
     return () => el.classList.remove('no-elevate');
   }, [updatePlanModal]);
 
+  // Initialize local credits map from incoming data (if documents already have `credits`)
+  useEffect(() => {
+    if (!data || !data.length) return;
+    const map = {};
+    data.forEach((r) => {
+      if (r.id && r.credits) {
+        map[r.id] = {
+          largeCommits: Number(r.credits.largeCommits || 0),
+          smallChanges: Number(r.credits.smallChanges || 0),
+        };
+      }
+    });
+    if (Object.keys(map).length) setRequestCredits(prev => ({ ...prev, ...map }));
+  }, [data]);
+
   const handleUpdatePlan = (request) => {
     setUpdatePlanModal(request);
     setNewPlan(request.plan || '');
     setMenuOpen(null);
+  };
+
+  const handleOpenCreditModal = (request) => {
+    setCreditModal(request);
+    if (!requestCredits[request.id]) {
+      setRequestCredits(prev => ({
+        ...prev,
+        [request.id]: { largeCommits: 0, smallChanges: 0 }
+      }));
+    }
+    setMenuOpen(null);
+  };
+
+  const addCredit = async (type) => {
+    if (!creditModal) return;
+
+    const plan = creditModal.plan;
+    const limits = TIER_LIMITS[plan];
+    if (!limits) return;
+
+    const currentCredits = requestCredits[creditModal.id] || { largeCommits: 0, smallChanges: 0 };
+
+    let newCredits = { ...currentCredits };
+
+    if (type === 'largeCommit') {
+      if (limits.largeCommits !== null && currentCredits.largeCommits >= limits.largeCommits) {
+        alert(`Large Commit limit reached (${limits.largeCommits}/${limits.largeCommits})`);
+        return;
+      }
+      newCredits.largeCommits = currentCredits.largeCommits + 1;
+    } else if (type === 'smallChange') {
+      if (limits.smallChanges !== null && currentCredits.smallChanges >= limits.smallChanges) {
+        alert(`Small Change limit reached (${limits.smallChanges}/${limits.smallChanges})`);
+        return;
+      }
+      newCredits.smallChanges = currentCredits.smallChanges + 1;
+    }
+
+    // Update local state immediately for snappy UI
+    setRequestCredits(prev => ({
+      ...prev,
+      [creditModal.id]: newCredits
+    }));
+
+    // Persist to Firestore
+    try {
+      await updateDoc(doc(db, 'serviceRequests', creditModal.id), {
+        credits: newCredits
+      });
+    } catch (err) {
+      console.error('Failed to persist credits to Firestore:', err);
+      alert('Failed to update credits in database. Please try again.');
+      // revert local state on failure
+      setRequestCredits(prev => ({
+        ...prev,
+        [creditModal.id]: currentCredits
+      }));
+    }
+  };
+
+  const closeCreditModal = () => {
+    setCreditModal(null);
   };
 
   // MANAGEMENT ACTIONS
@@ -198,6 +287,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
                       <span className="menu-item" onClick={() => updateStatus(request.id, 'In Review')}>In Review</span>
                       <span className="menu-item" onClick={() => handleMakeLive(request)} style={{color: '#10b981'}}>Go Live (Paid)</span>
                       <hr className="menu-divider" />
+                      <span className="menu-item" onClick={() => handleOpenCreditModal(request)} style={{color: '#fbbf24'}}>Manage Credits</span>
                       <span className="menu-item" onClick={() => handleUpdatePlan(request)}>Update Plan</span>
                       <span className="menu-item" onClick={() => onDelete(request.id)} style={{ color: 'red' }}>Delete</span>
                     </div>
@@ -214,6 +304,28 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
             <p><strong>Service Type:</strong> <span className="value">{request.serviceType}</span></p>
             <p><strong>Plan:</strong> <span className="value">{request.plan}</span></p>
             <p><strong>Billing Cycle:</strong> <span className="value">{request.billingCycle || 'Standard'}</span></p>
+            
+            {request.plan && TIER_LIMITS[request.plan] && (() => {
+              const credits = requestCredits[request.id] || { largeCommits: 0, smallChanges: 0 };
+              const limits = TIER_LIMITS[request.plan];
+              return (
+                <div style={{ 
+                  padding: '10px', 
+                  backgroundColor: 'rgba(251, 191, 36, 0.1)', 
+                  borderRadius: '4px',
+                  marginBottom: '8px'
+                }}>
+                  <p style={{ margin: '4px 0' }}>
+                    <strong>Credits Used:</strong>{' '}
+                    <span className="value">
+                      Large: {credits.largeCommits}/{limits.largeCommits} | 
+                      Small: {credits.smallChanges}/{limits.smallChanges === null ? '∞' : limits.smallChanges}
+                    </span>
+                  </p>
+                </div>
+              );
+            })()}
+
             <p><strong>Project Reference:</strong> <span className="value">{request.projectReference}</span></p>
             <p><strong>Requirements:</strong> <span className="value">{request.requirements}</span></p>
             <p><strong>Status:</strong> <span className="value" style={{color: isOverdue ? '#ff4d4d' : '#a78bfa', fontWeight: 'bold'}}>{request.requesterStatus || 'Lead'}</span></p>
@@ -262,6 +374,140 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button onClick={cancelUpdatePlan} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Cancel</button>
               <button onClick={confirmUpdatePlan} disabled={!newPlan} style={{ padding: '10px 20px', backgroundColor: newPlan ? '#6b21a8' : '#333', border: 'none', borderRadius: '6px', color: '#fff', cursor: newPlan ? 'pointer' : 'not-allowed', opacity: newPlan ? 1 : 0.5 }}>Update</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Credit Management Modal */}
+      {creditModal && (
+        <div className="modal-overlay" onClick={closeCreditModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Manage Credits</h3>
+            <p style={{ marginBottom: '16px', color: '#a78bfa' }}>
+              Managing credits for <strong>{creditModal.name}</strong> ({creditModal.plan})
+            </p>
+
+            {(() => {
+              const plan = creditModal.plan;
+              const limits = TIER_LIMITS[plan];
+              const credits = requestCredits[creditModal.id] || { largeCommits: 0, smallChanges: 0 };
+
+              if (!limits) {
+                return <p style={{ color: '#ef4444' }}>Plan not found. Please update plan first.</p>;
+              }
+
+              const largeCommitLimit = limits.largeCommits;
+              const smallChangeLimit = limits.smallChanges;
+              const largeCommitRemaining = largeCommitLimit - credits.largeCommits;
+              const smallChangeRemaining = smallChangeLimit === null ? Infinity : smallChangeLimit - credits.smallChanges;
+              const canAddLargeCommit = largeCommitRemaining > 0;
+              const canAddSmallChange = smallChangeLimit === null || smallChangeRemaining > 0;
+
+              return (
+                <div>
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ marginBottom: '12px', color: '#fbbf24' }}>Large Commits</h4>
+                    <div style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      padding: '12px',
+                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                      borderRadius: '6px',
+                      marginBottom: '12px'
+                    }}>
+                      <span>
+                        <strong>{credits.largeCommits}/{largeCommitLimit}</strong>
+                        {largeCommitRemaining <= 0 && <span style={{ color: '#ef4444', marginLeft: '8px' }}>(Limit reached)</span>}
+                      </span>
+                      <button 
+                        onClick={() => addCredit('largeCommit')}
+                        disabled={!canAddLargeCommit}
+                        style={{ 
+                          padding: '8px 16px', 
+                          backgroundColor: canAddLargeCommit ? '#3b82f6' : '#666', 
+                          border: 'none', 
+                          borderRadius: '4px', 
+                          color: '#fff', 
+                          cursor: canAddLargeCommit ? 'pointer' : 'not-allowed',
+                          opacity: canAddLargeCommit ? 1 : 0.5
+                        }}
+                      >
+                        Credit 1 Large Commit
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ marginBottom: '12px', color: '#fbbf24' }}>Small Changes</h4>
+                    <div style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      padding: '12px',
+                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                      borderRadius: '6px',
+                      marginBottom: '12px'
+                    }}>
+                      <span>
+                        <strong>
+                          {credits.smallChanges}/{smallChangeLimit === null ? '∞' : smallChangeLimit}
+                        </strong>
+                        {smallChangeLimit !== null && smallChangeRemaining <= 0 && <span style={{ color: '#ef4444', marginLeft: '8px' }}>(Limit reached)</span>}
+                      </span>
+                      <button 
+                        onClick={() => addCredit('smallChange')}
+                        disabled={!canAddSmallChange}
+                        style={{ 
+                          padding: '8px 16px', 
+                          backgroundColor: canAddSmallChange ? '#3b82f6' : '#666', 
+                          border: 'none', 
+                          borderRadius: '4px', 
+                          color: '#fff', 
+                          cursor: canAddSmallChange ? 'pointer' : 'not-allowed',
+                          opacity: canAddSmallChange ? 1 : 0.5
+                        }}
+                      >
+                        Credit 1 Small Change
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ 
+                    padding: '12px',
+                    backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                    borderRadius: '6px',
+                    marginBottom: '20px'
+                  }}>
+                    <p style={{ margin: '4px 0', fontSize: '0.9rem' }}>
+                      <strong>Plan Summary:</strong>
+                    </p>
+                    <p style={{ margin: '4px 0', fontSize: '0.9rem' }}>
+                      • Large Commits: {largeCommitLimit}/month
+                    </p>
+                    <p style={{ margin: '4px 0', fontSize: '0.9rem' }}>
+                      • Small Changes: {smallChangeLimit === null ? 'Unlimited' : smallChangeLimit}/month
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button 
+                onClick={closeCreditModal} 
+                style={{ 
+                  padding: '10px 20px', 
+                  backgroundColor: 'transparent', 
+                  border: '1px solid rgba(255,255,255,0.2)', 
+                  borderRadius: '6px', 
+                  color: '#fff', 
+                  cursor: 'pointer' 
+                }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

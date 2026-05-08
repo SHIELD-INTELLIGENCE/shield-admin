@@ -140,6 +140,38 @@ export default function App() {
           };
         });
         setServiceRequestsData(arr);
+        // Attempt a monthly reset when service requests arrive (client-side)
+        // This runs at most once per month per client session.
+        (async () => {
+          try {
+            const currentMonth = new Date().toISOString().slice(0,7); // YYYY-MM
+            const resetKey = 'shield_monthly_reset';
+            const lastRun = (() => { try { return localStorage.getItem(resetKey); } catch(e) { return null; }})();
+            if (lastRun === currentMonth) return; // already ran this month on this client
+
+            for (const r of arr) {
+              if (!r.id) continue;
+              const credits = r.credits || {};
+              if (credits.lastResetMonth === currentMonth) continue;
+
+              // Only reset when there is something to reset (non-zero or missing)
+              const needsReset = (Number(credits.largeCommits || 0) > 0) || (Number(credits.smallChanges || 0) > 0) || !credits.lastResetMonth;
+              if (!needsReset) continue;
+
+              try {
+                await updateDoc(doc(db, 'serviceRequests', r.id), {
+                  credits: { largeCommits: 0, smallChanges: 0, lastResetMonth: currentMonth }
+                });
+              } catch (err) {
+                console.error('Monthly reset failed for', r.id, err);
+              }
+            }
+
+            try { localStorage.setItem(resetKey, currentMonth); } catch (e) { /* ignore */ }
+          } catch (e) {
+            console.error('Monthly reset flow failed:', e);
+          }
+        })();
       },
       (err) => {
         console.error("serviceRequests snapshot error:", err);

@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import '../global.css';
 import CustomDropdown from '../components/CustomDropdown.jsx';
-import { doc, updateDoc } from 'firebase/firestore';
+import ConfirmModal from '../components/ConfirmModal.jsx';
+import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase.js';
 
 // Tier limits configuration
@@ -23,6 +24,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
   const [newPlan, setNewPlan] = useState('');
   const [creditModal, setCreditModal] = useState(null);
   const [requestCredits, setRequestCredits] = useState({});
+  const [confirmModal, setConfirmModal] = useState({ open: false });
 
   const toggleMenu = (index) => {
     setMenuOpen(menuOpen === index ? null : index);
@@ -72,6 +74,72 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
     setMenuOpen(null);
   };
 
+  const showConfirm = ({ title, message, onConfirm, confirmLabel, cancelLabel, destructive }) => {
+    setConfirmModal({ open: true, title, message, onConfirm, confirmLabel, cancelLabel, destructive });
+  };
+
+  const closeConfirm = () => setConfirmModal({ open: false });
+
+  const normalizeEmailLocal = (email) => String(email || '').trim().toLowerCase();
+
+  const handleClearPlan = async (request) => {
+    if (!request || !request.id) return;
+
+    showConfirm({
+      title: 'Clear Plan Details',
+      message: `Clear plan details and reset credits for ${request.name || request.email || request.id}?`,
+      confirmLabel: 'Clear Plan',
+      cancelLabel: 'Cancel',
+      destructive: true,
+      onConfirm: async () => {
+        const currentMonth = new Date().toISOString().slice(0,7);
+        const newCredits = { largeCommits: 0, smallChanges: 0, lastResetMonth: currentMonth };
+        try {
+          await updateDoc(doc(db, 'serviceRequests', request.id), {
+            plan: 'To be discussed',
+            billingCycle: null,
+            credits: newCredits
+          });
+          // update local UI state
+          setRequestCredits(prev => ({ ...prev, [request.id]: { largeCommits: 0, smallChanges: 0 } }));
+          closeConfirm();
+          showConfirm({ title: 'Done', message: 'Plan cleared and credits reset.', cancelLabel: 'OK' });
+        } catch (err) {
+          console.error('Failed to clear plan details:', err);
+          closeConfirm();
+          showConfirm({ title: 'Error', message: 'Failed to clear plan. Check console for details.', cancelLabel: 'OK' });
+        }
+      }
+    });
+  };
+
+  const handleRemoveUser = async (request) => {
+    if (!request || !request.email) {
+      showConfirm({ title: 'No Email', message: 'No user email available to remove.', cancelLabel: 'OK' });
+      return;
+    }
+    const emailId = normalizeEmailLocal(request.email);
+
+    showConfirm({
+      title: 'Remove User',
+      message: `Permanently remove user ${request.email}? This cannot be undone.`,
+      confirmLabel: 'Remove',
+      cancelLabel: 'Cancel',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'users', emailId));
+          closeConfirm();
+          showConfirm({ title: 'Removed', message: 'User removed.', cancelLabel: 'OK' });
+        } catch (err) {
+          console.error('Failed to remove user:', err);
+          closeConfirm();
+          showConfirm({ title: 'Error', message: 'Failed to remove user. Check console for details.', cancelLabel: 'OK' });
+        }
+      }
+    });
+  };
+
   const addCredit = async (type) => {
     if (!creditModal) return;
 
@@ -85,13 +153,13 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
 
     if (type === 'largeCommit') {
       if (limits.largeCommits !== null && currentCredits.largeCommits >= limits.largeCommits) {
-        alert(`Large Commit limit reached (${limits.largeCommits}/${limits.largeCommits})`);
+        showConfirm({ title: 'Limit reached', message: `Large Commit limit reached (${limits.largeCommits}/${limits.largeCommits})`, cancelLabel: 'OK' });
         return;
       }
       newCredits.largeCommits = currentCredits.largeCommits + 1;
     } else if (type === 'smallChange') {
       if (limits.smallChanges !== null && currentCredits.smallChanges >= limits.smallChanges) {
-        alert(`Small Change limit reached (${limits.smallChanges}/${limits.smallChanges})`);
+        showConfirm({ title: 'Limit reached', message: `Small Change limit reached (${limits.smallChanges}/${limits.smallChanges})`, cancelLabel: 'OK' });
         return;
       }
       newCredits.smallChanges = currentCredits.smallChanges + 1;
@@ -110,11 +178,48 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
       });
     } catch (err) {
       console.error('Failed to persist credits to Firestore:', err);
-      alert('Failed to update credits in database. Please try again.');
+      showConfirm({ title: 'Error', message: 'Failed to update credits in database. Please try again.', cancelLabel: 'OK' });
       // revert local state on failure
       setRequestCredits(prev => ({
         ...prev,
         [creditModal.id]: currentCredits
+      }));
+    }
+  };
+
+  const removeCredit = async (type) => {
+    if (!creditModal) return;
+
+    const currentCredits = requestCredits[creditModal.id] || { largeCommits: 0, smallChanges: 0 };
+    const original = { ...currentCredits };
+    let newCredits = { ...currentCredits };
+
+    if (type === 'largeCommit') {
+      if (currentCredits.largeCommits <= 0) return;
+      newCredits.largeCommits = currentCredits.largeCommits - 1;
+    } else if (type === 'smallChange') {
+      if (currentCredits.smallChanges <= 0) return;
+      newCredits.smallChanges = currentCredits.smallChanges - 1;
+    }
+
+    // Update local state immediately
+    setRequestCredits(prev => ({
+      ...prev,
+      [creditModal.id]: newCredits
+    }));
+
+    // Persist to Firestore
+    try {
+      await updateDoc(doc(db, 'serviceRequests', creditModal.id), {
+        credits: newCredits
+      });
+    } catch (err) {
+      console.error('Failed to persist credits removal to Firestore:', err);
+      showConfirm({ title: 'Error', message: 'Failed to update credits in database. Please try again.', cancelLabel: 'OK' });
+      // revert local state on failure
+      setRequestCredits(prev => ({
+        ...prev,
+        [creditModal.id]: original
       }));
     }
   };
@@ -152,7 +257,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
       setUpdatePlanModal(null);
       setNewPlan('');
     } catch (error) {
-      alert('Failed to update plan. Please try again.');
+      showConfirm({ title: 'Error', message: 'Failed to update plan. Please try again.', cancelLabel: 'OK' });
     }
   };
   
@@ -282,14 +387,24 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
                   {menuOpen === index && (
                     <div className="menu-dropdown">
                       {/* PIPELINE ACTIONS */}
-                      <span className="menu-item" onClick={() => updateStatus(request.id, 'Negotiating')}>Negotiating</span>
-                      <span className="menu-item" onClick={() => updateStatus(request.id, 'Building')}>Building</span>
-                      <span className="menu-item" onClick={() => updateStatus(request.id, 'In Review')}>In Review</span>
-                      <span className="menu-item" onClick={() => handleMakeLive(request)} style={{color: '#10b981'}}>Go Live (Paid)</span>
+                      {!(request.requesterStatus && String(request.requesterStatus).toLowerCase() === 'active') && (
+                        <>
+                          <span className="menu-item" onClick={() => updateStatus(request.id, 'Negotiating')}>Negotiating</span>
+                          <span className="menu-item" onClick={() => updateStatus(request.id, 'Building')}>Building</span>
+                          <span className="menu-item" onClick={() => updateStatus(request.id, 'In Review')}>In Review</span>
+                        </>
+                      )}
+                      {request.plan && String(request.plan).toLowerCase() !== 'to be discussed' && (
+                        <span className="menu-item" onClick={() => handleMakeLive(request)} style={{color: '#10b981'}}>Go Live (Paid)</span>
+                      )}
                       <hr className="menu-divider" />
                       <span className="menu-item" onClick={() => handleOpenCreditModal(request)} style={{color: '#fbbf24'}}>Manage Credits</span>
+                      <span className="menu-item" onClick={() => handleClearPlan(request)}>Clear Plan Details</span>
                       <span className="menu-item" onClick={() => handleUpdatePlan(request)}>Update Plan</span>
-                      <span className="menu-item" onClick={() => onDelete(request.id)} style={{ color: 'red' }}>Delete</span>
+                      {request.requesterStatus && String(request.requesterStatus).toLowerCase() === 'active' && (
+                        <span className="menu-item" onClick={() => handleRemoveUser(request)} style={{ color: '#ef4444' }}>Remove User</span>
+                      )}
+                      <span className="menu-item" onClick={() => onDelete(request.id)} style={{ color: 'red' }}>Delete Request</span>
                     </div>
                   )}
                 </div>
@@ -421,21 +536,41 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
                         <strong>{credits.largeCommits}/{largeCommitLimit}</strong>
                         {largeCommitRemaining <= 0 && <span style={{ color: '#ef4444', marginLeft: '8px' }}>(Limit reached)</span>}
                       </span>
-                      <button 
-                        onClick={() => addCredit('largeCommit')}
-                        disabled={!canAddLargeCommit}
-                        style={{ 
-                          padding: '8px 16px', 
-                          backgroundColor: canAddLargeCommit ? '#3b82f6' : '#666', 
-                          border: 'none', 
-                          borderRadius: '4px', 
-                          color: '#fff', 
-                          cursor: canAddLargeCommit ? 'pointer' : 'not-allowed',
-                          opacity: canAddLargeCommit ? 1 : 0.5
-                        }}
-                      >
-                        Credit 1 Large Commit
-                      </button>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => removeCredit('largeCommit')}
+                          disabled={credits.largeCommits <= 0}
+                          aria-label="Remove Large Commit credit"
+                          style={{
+                            padding: '6px 10px',
+                            backgroundColor: credits.largeCommits > 0 ? '#ef4444' : '#666',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: credits.largeCommits > 0 ? 'pointer' : 'not-allowed',
+                            opacity: credits.largeCommits > 0 ? 1 : 0.5
+                          }}
+                        >
+                          −
+                        </button>
+
+                        <button
+                          onClick={() => addCredit('largeCommit')}
+                          disabled={!canAddLargeCommit}
+                          aria-label="Add Large Commit credit"
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: canAddLargeCommit ? '#3b82f6' : '#666',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: canAddLargeCommit ? 'pointer' : 'not-allowed',
+                            opacity: canAddLargeCommit ? 1 : 0.5
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -456,21 +591,41 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
                         </strong>
                         {smallChangeLimit !== null && smallChangeRemaining <= 0 && <span style={{ color: '#ef4444', marginLeft: '8px' }}>(Limit reached)</span>}
                       </span>
-                      <button 
-                        onClick={() => addCredit('smallChange')}
-                        disabled={!canAddSmallChange}
-                        style={{ 
-                          padding: '8px 16px', 
-                          backgroundColor: canAddSmallChange ? '#3b82f6' : '#666', 
-                          border: 'none', 
-                          borderRadius: '4px', 
-                          color: '#fff', 
-                          cursor: canAddSmallChange ? 'pointer' : 'not-allowed',
-                          opacity: canAddSmallChange ? 1 : 0.5
-                        }}
-                      >
-                        Credit 1 Small Change
-                      </button>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => removeCredit('smallChange')}
+                          disabled={credits.smallChanges <= 0}
+                          aria-label="Remove Small Change credit"
+                          style={{
+                            padding: '6px 10px',
+                            backgroundColor: credits.smallChanges > 0 ? '#ef4444' : '#666',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: credits.smallChanges > 0 ? 'pointer' : 'not-allowed',
+                            opacity: credits.smallChanges > 0 ? 1 : 0.5
+                          }}
+                        >
+                          −
+                        </button>
+
+                        <button
+                          onClick={() => addCredit('smallChange')}
+                          disabled={!canAddSmallChange}
+                          aria-label="Add Small Change credit"
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: canAddSmallChange ? '#3b82f6' : '#666',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: canAddSmallChange ? 'pointer' : 'not-allowed',
+                            opacity: canAddSmallChange ? 1 : 0.5
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -512,6 +667,19 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
           </div>
         </div>
       )}
+
+      {/* Global Confirm / Info modal */}
+      <ConfirmModal
+        open={!!confirmModal.open}
+        title={confirmModal.title || ''}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={closeConfirm}
+        confirmLabel={confirmModal.confirmLabel}
+        cancelLabel={confirmModal.cancelLabel}
+        destructive={confirmModal.destructive}
+      >
+        {confirmModal.message}
+      </ConfirmModal>
     </div>
   );
 };

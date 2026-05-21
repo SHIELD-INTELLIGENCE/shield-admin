@@ -32,7 +32,21 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
-const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus }) => {
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function getDaysRemaining(endDateValue) {
+  if (!endDateValue) return null;
+  const endDate = new Date(endDateValue);
+  if (Number.isNaN(endDate.getTime())) return null;
+  const diffMs = startOfDay(endDate).getTime() - startOfDay(new Date()).getTime();
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+
+const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus, focusRequestId }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [query, setQuery] = useState('');
   const [filterSource, setFilterSource] = useState('any');
@@ -49,6 +63,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
   const [websiteBuildingDrafts, setWebsiteBuildingDrafts] = useState({});
   const [websiteBuildingDirty, setWebsiteBuildingDirty] = useState({});
   const [websiteBuildingSaving, setWebsiteBuildingSaving] = useState({});
+  const [focusedCardId, setFocusedCardId] = useState(null);
   const [confirmModal, setConfirmModal] = useState({ open: false });
 
   const toggleMenu = (index) => {
@@ -117,6 +132,17 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
       return changed ? next : prev;
     });
   }, [data, websiteBuildingDirty]);
+
+  useEffect(() => {
+    if (!focusRequestId) return;
+    const el = document.getElementById(`service-request-${focusRequestId}`);
+    if (!el) return;
+
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setFocusedCardId(focusRequestId);
+    const timer = window.setTimeout(() => setFocusedCardId(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [focusRequestId]);
 
   const handleUpdatePlan = (request) => {
     setUpdatePlanModal(request);
@@ -408,6 +434,9 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
 
     await onUpdateStatus(request.id, { 
       requesterStatus: 'Active',
+      status: 'active',
+      billingStartDate: billingStart.toISOString(),
+      billingEndDate: renewalDate.toISOString(),
       liveDate: new Date().toISOString(),
       renewalDate: renewalDate.toISOString()
     });
@@ -535,13 +564,33 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
         const billingStartDate = request.billingStartDate ? new Date(request.billingStartDate) : null;
         const websiteBuildingWindowOpen = !billingStartDate || Number.isNaN(billingStartDate.getTime()) || new Date() < billingStartDate;
         const showWebsiteBuildingOption = isLive && websiteBuildingWindowOpen;
+        const billingDaysRemaining = getDaysRemaining(request.billingEndDate);
+        const isBillingExpired = billingDaysRemaining !== null && billingDaysRemaining <= 0;
+        const showBillingBadge = billingDaysRemaining !== null;
 
         return (
-          <div key={request.id || index} className={`request-card ${isOverdue ? 'card-overdue' : ''}`}>
+          <div
+            key={request.id || index}
+            id={request.id ? `service-request-${request.id}` : undefined}
+            className={`request-card ${isOverdue ? 'card-overdue' : ''}`}
+            style={focusedCardId === request.id ? { boxShadow: '0 0 0 2px #f59e0b, 0 0 0 6px rgba(245, 158, 11, 0.18)' } : undefined}
+          >
             <div className="card-header">
               <h3>{request.name}</h3>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {showBillingBadge && (
+                  <span
+                    className="badge"
+                    style={{
+                      background: isBillingExpired ? '#7f1d1d' : 'rgba(245, 158, 11, 0.22)',
+                      border: `1px solid ${isBillingExpired ? '#ef4444' : '#f59e0b'}`,
+                      color: isBillingExpired ? '#fecaca' : '#fde68a',
+                    }}
+                  >
+                    {isBillingExpired ? 'Expired' : `Expiring in ${billingDaysRemaining} days`}
+                  </span>
+                )}
                 <span className={`badge ${srcClass}`}>{src}</span>
 
                 <div className="menu-container">
@@ -596,6 +645,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
                   : 'Immediate'}
               </span>
             </p>
+            <p><strong>Billing End:</strong> <span className="value">{formatDateTime(request.billingEndDate) || '—'}</span></p>
 
             {showWebsiteBuildingOption && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px', color: '#f5d0fe', fontWeight: 'bold' }}>

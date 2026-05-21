@@ -13,6 +13,25 @@ const TIER_LIMITS = {
   'To be discussed': { largeCommits: 0, smallChanges: 0 },
 };
 
+function getRequestBaseDate(request) {
+  const source = request?.createdAt || request?.date;
+  const parsed = source ? new Date(source) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+}
+
+function addOneMonth(date) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + 1);
+  return next;
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString();
+}
+
 const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [query, setQuery] = useState('');
@@ -24,6 +43,12 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
   const [newPlan, setNewPlan] = useState('');
   const [creditModal, setCreditModal] = useState(null);
   const [requestCredits, setRequestCredits] = useState({});
+  const [notesDrafts, setNotesDrafts] = useState({});
+  const [notesDirty, setNotesDirty] = useState({});
+  const [notesSaving, setNotesSaving] = useState({});
+  const [websiteBuildingDrafts, setWebsiteBuildingDrafts] = useState({});
+  const [websiteBuildingDirty, setWebsiteBuildingDirty] = useState({});
+  const [websiteBuildingSaving, setWebsiteBuildingSaving] = useState({});
   const [confirmModal, setConfirmModal] = useState({ open: false });
 
   const toggleMenu = (index) => {
@@ -57,6 +82,42 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
     if (Object.keys(map).length) setRequestCredits(prev => ({ ...prev, ...map }));
   }, [data]);
 
+  useEffect(() => {
+    if (!data || !data.length) return;
+
+    setNotesDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      data.forEach((request) => {
+        if (!request?.id || notesDirty[request.id]) return;
+        const incoming = String(request.notes || '');
+        if (next[request.id] !== incoming) {
+          next[request.id] = incoming;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [data, notesDirty]);
+
+  useEffect(() => {
+    if (!data || !data.length) return;
+
+    setWebsiteBuildingDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      data.forEach((request) => {
+        if (!request?.id || websiteBuildingDirty[request.id]) return;
+        const incoming = !!request.includesWebsiteBuilding;
+        if (next[request.id] !== incoming) {
+          next[request.id] = incoming;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [data, websiteBuildingDirty]);
+
   const handleUpdatePlan = (request) => {
     setUpdatePlanModal(request);
     setNewPlan(request.plan || '');
@@ -72,6 +133,99 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
       }));
     }
     setMenuOpen(null);
+  };
+
+  const handleNotesChange = (requestId, value) => {
+    setNotesDrafts((prev) => ({
+      ...prev,
+      [requestId]: value,
+    }));
+    setNotesDirty((prev) => ({
+      ...prev,
+      [requestId]: true,
+    }));
+  };
+
+  const handleSaveNotes = async (request) => {
+    if (!request?.id) return;
+
+    const draft = String(notesDrafts[request.id] ?? request.notes ?? '');
+    const persisted = String(request.notes ?? '');
+    if (draft === persisted) return;
+
+    setNotesSaving((prev) => ({ ...prev, [request.id]: true }));
+    try {
+      await updateDoc(doc(db, 'serviceRequests', request.id), {
+        notes: draft,
+        notesUpdatedAt: new Date().toISOString(),
+      });
+
+      setNotesDirty((prev) => ({
+        ...prev,
+        [request.id]: false,
+      }));
+    } catch (err) {
+      console.error('Failed to save request notes:', err);
+      showConfirm({
+        title: 'Error',
+        message: 'Failed to save notes. Please try again.',
+        cancelLabel: 'OK',
+      });
+    } finally {
+      setNotesSaving((prev) => ({ ...prev, [request.id]: false }));
+    }
+  };
+
+  const handleWebsiteBuildingToggle = async (request, nextValue) => {
+    if (!request?.id) return;
+
+    const baseDate = getRequestBaseDate(request);
+    const nextBillingStartDate = nextValue ? addOneMonth(baseDate).toISOString() : null;
+
+    setWebsiteBuildingDrafts((prev) => ({
+      ...prev,
+      [request.id]: nextValue,
+    }));
+    setWebsiteBuildingDirty((prev) => ({
+      ...prev,
+      [request.id]: true,
+    }));
+    setWebsiteBuildingSaving((prev) => ({
+      ...prev,
+      [request.id]: true,
+    }));
+
+    try {
+      await updateDoc(doc(db, 'serviceRequests', request.id), {
+        includesWebsiteBuilding: nextValue,
+        billingStartDate: nextBillingStartDate,
+      });
+
+      setWebsiteBuildingDirty((prev) => ({
+        ...prev,
+        [request.id]: false,
+      }));
+    } catch (err) {
+      console.error('Failed to save website-building toggle:', err);
+      setWebsiteBuildingDrafts((prev) => ({
+        ...prev,
+        [request.id]: !!request.includesWebsiteBuilding,
+      }));
+      setWebsiteBuildingDirty((prev) => ({
+        ...prev,
+        [request.id]: false,
+      }));
+      showConfirm({
+        title: 'Error',
+        message: 'Failed to update website building setting. Please try again.',
+        cancelLabel: 'OK',
+      });
+    } finally {
+      setWebsiteBuildingSaving((prev) => ({
+        ...prev,
+        [request.id]: false,
+      }));
+    }
   };
 
   const showConfirm = ({ title, message, onConfirm, confirmLabel, cancelLabel, destructive }) => {
@@ -98,10 +252,14 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
           await updateDoc(doc(db, 'serviceRequests', request.id), {
             plan: 'To be discussed',
             billingCycle: null,
+            includesWebsiteBuilding: false,
+            billingStartDate: null,
             credits: newCredits
           });
           // update local UI state
           setRequestCredits(prev => ({ ...prev, [request.id]: { largeCommits: 0, smallChanges: 0 } }));
+          setWebsiteBuildingDrafts(prev => ({ ...prev, [request.id]: false }));
+          setWebsiteBuildingDirty(prev => ({ ...prev, [request.id]: false }));
           closeConfirm();
           showConfirm({ title: 'Done', message: 'Plan cleared and credits reset.', cancelLabel: 'OK' });
         } catch (err) {
@@ -238,8 +396,14 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
     // Logic: 90 days for quarterly, 30 for monthly/default
     const isQuarterly = request.billingCycle?.toLowerCase().includes('quarterly');
     const days = isQuarterly ? 90 : 30;
-    
-    const renewalDate = new Date();
+
+    const billingStart = request.includesWebsiteBuilding && request.billingStartDate
+      ? new Date(request.billingStartDate)
+      : request.includesWebsiteBuilding
+        ? addOneMonth(getRequestBaseDate(request))
+        : new Date();
+
+    const renewalDate = new Date(billingStart);
     renewalDate.setDate(renewalDate.getDate() + days);
 
     await onUpdateStatus(request.id, { 
@@ -366,6 +530,11 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
         const src = String(request.source || 'unknown');
         const srcClass = `source-${src.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
         const isOverdue = request.renewalDate && new Date(request.renewalDate) < new Date();
+        const includesWebsiteBuilding = websiteBuildingDrafts[request.id] ?? !!request.includesWebsiteBuilding;
+        const isLive = String(request.requesterStatus || '').toLowerCase() === 'active';
+        const billingStartDate = request.billingStartDate ? new Date(request.billingStartDate) : null;
+        const websiteBuildingWindowOpen = !billingStartDate || Number.isNaN(billingStartDate.getTime()) || new Date() < billingStartDate;
+        const showWebsiteBuildingOption = isLive && websiteBuildingWindowOpen;
 
         return (
           <div key={request.id || index} className={`request-card ${isOverdue ? 'card-overdue' : ''}`}>
@@ -419,6 +588,41 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
             <p><strong>Service Type:</strong> <span className="value">{request.serviceType}</span></p>
             <p><strong>Plan:</strong> <span className="value">{request.plan}</span></p>
             <p><strong>Billing Cycle:</strong> <span className="value">{request.billingCycle || 'Standard'}</span></p>
+            <p>
+              <strong>Billing Start:</strong>{' '}
+              <span className="value">
+                {includesWebsiteBuilding
+                  ? formatDateTime(request.billingStartDate) || formatDateTime(addOneMonth(getRequestBaseDate(request)).toISOString())
+                  : 'Immediate'}
+              </span>
+            </p>
+
+            {showWebsiteBuildingOption && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px', color: '#f5d0fe', fontWeight: 'bold' }}>
+                <input
+                  type="checkbox"
+                  checked={includesWebsiteBuilding}
+                  disabled={websiteBuildingSaving[request.id]}
+                  onChange={(e) => handleWebsiteBuildingToggle(request, e.target.checked)}
+                  style={{ width: 16, height: 16 }}
+                />
+                Includes Website Building
+              </label>
+            )}
+
+            {showWebsiteBuildingOption && includesWebsiteBuilding && (
+              <div style={{
+                padding: '10px 12px',
+                borderRadius: '8px',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.25)',
+                marginBottom: '10px',
+                color: '#d1fae5',
+                fontWeight: 600,
+              }}>
+                First Month Free (Website Build Included)
+              </div>
+            )}
             
             {request.plan && TIER_LIMITS[request.plan] && (() => {
               const credits = requestCredits[request.id] || { largeCommits: 0, smallChanges: 0 };
@@ -443,6 +647,56 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus 
 
             <p><strong>Project Reference:</strong> <span className="value">{request.projectReference}</span></p>
             <p><strong>Requirements:</strong> <span className="value">{request.requirements}</span></p>
+
+            <div style={{ margin: '12px 0 6px' }}>
+              <label style={{ display: 'block', marginBottom: 6, fontWeight: 'bold', color: '#f5d0fe' }}>
+                Admin Notes <span style={{ fontWeight: 400, color: '#c4b5fd' }}>(private)</span>
+              </label>
+              <textarea
+                value={notesDrafts[request.id] ?? String(request.notes || '')}
+                onChange={(e) => handleNotesChange(request.id, e.target.value)}
+                placeholder="Add internal notes for this request. Visible only in the admin dashboard."
+                rows={5}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(167, 139, 250, 0.35)',
+                  background: 'rgba(17, 24, 39, 0.85)',
+                  color: '#fff',
+                  font: 'inherit',
+                  lineHeight: 1.5,
+                  marginBottom: '8px',
+                }}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', justifyContent: 'space-between' }}>
+                <div style={{ color: '#c4b5fd', fontSize: '0.9rem' }}>
+                  {request.notesUpdatedAt
+                    ? `Last updated ${new Date(request.notesUpdatedAt).toLocaleString()}`
+                    : 'No saved notes yet.'}
+                </div>
+                <button
+                  onClick={() => handleSaveNotes(request)}
+                  disabled={
+                    notesSaving[request.id] ||
+                    String(notesDrafts[request.id] ?? request.notes ?? '') === String(request.notes ?? '')
+                  }
+                  style={{
+                    padding: '8px 14px',
+                    backgroundColor: notesSaving[request.id] ? '#4b5563' : '#6b21a8',
+                    border: 'none',
+                    borderRadius: '6px',
+                    color: '#fff',
+                    cursor: notesSaving[request.id] ? 'not-allowed' : 'pointer',
+                    opacity: notesSaving[request.id] ? 0.7 : 1,
+                  }}
+                >
+                  {notesSaving[request.id] ? 'Saving...' : 'Save Notes'}
+                </button>
+              </div>
+            </div>
             <p><strong>Status:</strong> <span className="value" style={{color: isOverdue ? '#ff4d4d' : '#a78bfa', fontWeight: 'bold'}}>{request.requesterStatus || 'Lead'}</span></p>
             
             {request.renewalDate && (

@@ -9,7 +9,7 @@ import JoinApplicationsTab from "../Tabs/JoinApplicationsTab.jsx";
 import ServiceRequestsTab from "../Tabs/ServiceRequestsTab.jsx";
 import "../global.css";
 
-import { auth, db, usersCollection } from "../firebase.js";
+import { auth, db, usersCollection, invoicesCollection } from "../firebase.js";
 
 import { doc, getDoc, getDocs, limit, query, where, collection, onSnapshot, deleteDoc, updateDoc } from "firebase/firestore";
 
@@ -126,6 +126,7 @@ async function isAuthUserAdmin(user) {
 export default function App() {
   const [joinApplicationsData, setJoinApplicationsData] = useState([]);
   const [serviceRequestsData, setServiceRequestsData] = useState([]);
+  const [invoicesData, setInvoicesData] = useState([]);
   const [loggedIn, setLoggedIn] = useState(false);
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
@@ -189,6 +190,7 @@ export default function App() {
 
             for (const r of arr) {
               if (!r.id) continue;
+              if (r.isPaused) continue;
               const credits = r.credits || {};
               if (credits.lastResetMonth === currentMonth) continue;
 
@@ -216,9 +218,30 @@ export default function App() {
       }
     );
 
+    const unsubInvoices = onSnapshot(
+      invoicesCollection,
+      (snap) => {
+        const arr = snap.docs.map((d) => {
+          const dd = d.data() || {};
+          return {
+            id: d.id,
+            ...dd,
+            createdAt: dd.createdAt && typeof dd.createdAt.toDate === "function"
+              ? dd.createdAt.toDate().toISOString()
+              : dd.createdAt || new Date().toISOString(),
+          };
+        });
+        setInvoicesData(arr);
+      },
+      (err) => {
+        console.error("invoices snapshot error:", err);
+      }
+    );
+
     return () => {
       try { unsubJoin(); } catch (e) {}
       try { unsubServ(); } catch (e) {}
+      try { unsubInvoices(); } catch (e) {}
     };
   }, []);
 
@@ -302,6 +325,27 @@ export default function App() {
     return alerts;
   }, [serviceRequestsData]);
 
+  const unpaidInvoiceWarnings = useMemo(() => {
+    const warnings = [];
+    const requestMap = new Map((serviceRequestsData || []).map((request) => [request.id, request]));
+
+    for (const invoice of invoicesData || []) {
+      if (String(invoice.status || '').toLowerCase() !== 'unpaid') continue;
+      const request = requestMap.get(invoice.requestId);
+      if (!request) continue;
+
+      warnings.push({
+        requestId: request.id,
+        requestName: request.name || 'Unknown',
+        invoiceId: invoice.invoiceId || invoice.id,
+        plan: invoice.planName || request.plan || '—',
+        amount: invoice.amount,
+      });
+    }
+
+    return warnings;
+  }, [invoicesData, serviceRequestsData]);
+
   useEffect(() => {
     const syncStatus = async () => {
       const updates = [];
@@ -312,6 +356,8 @@ export default function App() {
         if (daysRemaining === null) continue;
 
         const currentStatus = String(request.status || "").toLowerCase();
+        if (currentStatus && currentStatus !== "active" && currentStatus !== "expired") continue;
+
         const shouldBe = daysRemaining <= 0 ? "expired" : "active";
         if (currentStatus === shouldBe) continue;
 
@@ -440,8 +486,7 @@ export default function App() {
 
     try {
       await updateDoc(doc(db, "serviceRequests", alert.requestId), {
-        status: "paused",
-        requesterStatus: "Paused",
+        isPaused: true,
         pausedAt: new Date().toISOString(),
       });
       setNotice("Website paused for selected request.");
@@ -541,6 +586,22 @@ export default function App() {
           <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Billing Alerts</h2>
           <span style={{ color: "#c4b5fd", fontSize: "0.9rem" }}>{billingAlerts.length} active alert(s)</span>
         </div>
+
+        {unpaidInvoiceWarnings.length > 0 && (
+          <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, border: "1px solid rgba(239,68,68,0.35)", background: "rgba(127,29,29,0.18)", color: "#fecaca" }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Unpaid invoice warning</div>
+            <div style={{ color: "#fee2e2" }}>{unpaidInvoiceWarnings.length} unpaid invoice(s) are currently open.</div>
+            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              {unpaidInvoiceWarnings.slice(0, 3).map((warning) => (
+                <div key={`${warning.requestId}-${warning.invoiceId}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <span>{warning.requestName}</span>
+                  <span>{warning.invoiceId}</span>
+                  <span>{warning.plan}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {!billingAlerts.length && (
           <p style={{ margin: 0, color: "#9ca3af" }}>No urgent billing alerts right now.</p>
@@ -656,6 +717,7 @@ export default function App() {
         {activeTab === "serviceRequests" && (
           <ServiceRequestsTab 
             data={serviceRequestsData} 
+            invoicesData={invoicesData}
             onDelete={handleDeleteServiceRequest}
             onUpdatePlan={handleUpdateServiceRequestPlan}
             onUpdateStatus={handleUpdateStatus}

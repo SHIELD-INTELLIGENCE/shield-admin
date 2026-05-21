@@ -76,18 +76,7 @@ const JoinApplicationsTab = ({ data = [], onDelete, onUpdateStatus }) => {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-
-        <CustomDropdown
-          options={[
-            { value: 'any', label: 'Any terms' },
-            { value: 'yes', label: 'Accepted' },
-            { value: 'no', label: 'Not accepted' },
-          ]}
-          selected={filterAccepted}
-          onChange={(v) => setFilterAccepted(v)}
-          placeholder="Accepted"
-        />
-
+      
         <CustomDropdown
           options={[
             { value: 'createdDesc', label: 'Newest' },

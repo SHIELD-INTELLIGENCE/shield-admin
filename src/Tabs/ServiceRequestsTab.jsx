@@ -1,16 +1,24 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import '../global.css';
-import CustomDropdown from '../components/CustomDropdown.jsx';
-import ConfirmModal from '../components/ConfirmModal.jsx';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../firebase.js';
+import React, { useState, useMemo, useEffect } from "react";
+import "../global.css";
+import CustomDropdown from "../components/CustomDropdown.jsx";
+import ConfirmModal from "../components/ConfirmModal.jsx";
+import { jsPDF } from "jspdf";
+import { doc, updateDoc, deleteDoc, runTransaction } from "firebase/firestore";
+import { db, invoicesCollection } from "../firebase.js";
 
 // Tier limits configuration
 const TIER_LIMITS = {
-  'Starter Plan': { largeCommits: 1, smallChanges: 3 },
-  'Premium Plan': { largeCommits: 4, smallChanges: 6 },
-  'Elite Plan': { largeCommits: 8, smallChanges: null }, // null = unlimited
-  'To be discussed': { largeCommits: 0, smallChanges: 0 },
+  "Starter Plan": { largeCommits: 1, smallChanges: 3 },
+  "Premium Plan": { largeCommits: 4, smallChanges: 6 },
+  "Elite Plan": { largeCommits: 8, smallChanges: null }, // null = unlimited
+  "To be discussed": { largeCommits: 0, smallChanges: 0 },
+};
+
+const PLAN_INVOICE_AMOUNTS = {
+  "Starter Plan": 1499,
+  "Premium Plan": 2999,
+  "Elite Plan": 5999,
+  "To be discussed": 0,
 };
 
 function getRequestBaseDate(request) {
@@ -26,10 +34,317 @@ function addOneMonth(date) {
 }
 
 function formatDateTime(value) {
-  if (!value) return '';
+  if (!value) return "";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return '';
+  if (Number.isNaN(parsed.getTime())) return "";
   return parsed.toLocaleString();
+}
+
+function formatDateOnly(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleDateString();
+}
+
+function toDateInputValue(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateInputValue(value) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+function formatCurrency(amount) {
+  const numeric = Math.floor(Number(amount || 0));
+  
+  // Format to standard Indian numbering format (e.g., 1,00,000) using basic regex
+  let clearString = numeric.toString();
+  const lastThree = clearString.substring(clearString.length - 3);
+  const otherBits = clearString.substring(0, clearString.length - 3);
+  
+  if (otherBits !== '') {
+    clearString = otherBits.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + lastThree;
+  }
+  
+  // Return pure standard ASCII characters only
+  return `INR ${clearString}`;
+}
+
+function getDefaultInvoiceAmount(planName, request) {
+  const requestAmount = Number(request?.amount ?? request?.planAmount);
+  if (Number.isFinite(requestAmount) && requestAmount > 0) return requestAmount;
+  return PLAN_INVOICE_AMOUNTS[planName] ?? 0;
+}
+
+function getInvoiceDraftFromRequest(request) {
+  const billingStartDate =
+    request.billingStartDate ||
+    request.liveDate ||
+    request.createdAt ||
+    request.date ||
+    new Date().toISOString();
+  const billingEndDate =
+    request.billingEndDate ||
+    addOneMonth(new Date(billingStartDate)).toISOString();
+
+  return {
+    requestId: request.id,
+    clientName: request.name || "",
+    clientEmail: request.email || "",
+    planName: request.plan || "",
+    amount: String(getDefaultInvoiceAmount(request.plan, request)),
+    billingStartDate: toDateInputValue(billingStartDate),
+    billingEndDate: toDateInputValue(billingEndDate),
+    status: "unpaid",
+    paymentMethod: "",
+    transactionReference: "",
+  };
+}
+
+async function loadImageAsDataUrl(src) {
+  const response = await fetch(src);
+  if (!response.ok) return null;
+  const blob = await response.blob();
+
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function normalizeStatusLabel(status) {
+  return String(status || "unpaid").toLowerCase() === "paid"
+    ? "Paid"
+    : "Unpaid";
+}
+
+function buildInvoiceMessage(invoice) {
+  const start = formatDateOnly(invoice.billingStartDate) || "—";
+  const end = formatDateOnly(invoice.billingEndDate) || "—";
+  const statusLabel = normalizeStatusLabel(invoice.status);
+  const pdfLink = invoice.pdfUrl
+    ? `\n\nYou can find your invoice here: ${invoice.pdfUrl}`
+    : `\n\nInvoice ID: ${invoice.invoiceId}`;
+
+  return `Congratulations on your project, ${invoice.clientName || "Client"}!\n\nYour SHIELD service has been successfully set up and is now active.\n\nHere are your billing details:\n- Plan: ${invoice.planName || "—"}\n- Amount: ${formatCurrency(invoice.amount)}\n- Billing Period: ${start} to ${end}\n- Status: ${statusLabel}${pdfLink}\n\nLet me know once payment is completed (if pending), or if you need any support.\n\n— SHIELD`;
+}
+
+function buildShortInvoiceMessage(invoice) {
+  const start = formatDateOnly(invoice.billingStartDate) || "—";
+  const end = formatDateOnly(invoice.billingEndDate) || "—";
+  return `Hi ${invoice.clientName || "Client"}, your SHIELD plan (${invoice.planName || "—"}) is active.\nAmount: ${formatCurrency(invoice.amount)}\nBilling: ${start} → ${end}\nInvoice ID: ${invoice.invoiceId}\nLet me know once done.`;
+}
+
+async function buildInvoicePdf(invoice) {
+  const pdf = new jsPDF({ unit: "mm", format: "a4" });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 16;
+  const contentWidth = pageWidth - margin * 2;
+
+  pdf.setLineHeightFactor(1.4);
+
+  // Background
+  pdf.setFillColor(255, 255, 255);
+  pdf.rect(0, 0, pageWidth, pageHeight, "F");
+
+  // Logo
+  const logoDataUrl = await loadImageAsDataUrl("/logo.png").catch((e) => {
+    console.warn("Logo load failed", e);
+    return null;
+  });
+
+  if (logoDataUrl) {
+    pdf.addImage(logoDataUrl, "PNG", margin, 14, 16, 16);
+  }
+
+  // Header
+  const headerX = logoDataUrl ? margin + 22 : margin;
+
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(20);
+  pdf.setTextColor(17, 24, 39);
+  pdf.text("SHIELD", headerX, 20);
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(11);
+  pdf.setTextColor(75, 85, 99);
+  pdf.text("Invoice", headerX, 26);
+
+  // Meta (Right side)
+  pdf.setFontSize(10);
+  pdf.setTextColor(55, 65, 81);
+  pdf.text(`Invoice ID: ${invoice.invoiceId || "—"}`, pageWidth - margin, 18, { align: "right" });
+  
+  // Quick check for standard date extraction
+  const invoiceDate = invoice.createdAt || new Date().toISOString();
+  pdf.text(
+    `Date: ${formatDateOnly(invoiceDate)}`,
+    pageWidth - margin,
+    24,
+    { align: "right" }
+  );
+
+  // Divider
+  pdf.setDrawColor(209, 213, 219);
+  pdf.setLineWidth(0.3);
+  pdf.line(margin, 34, pageWidth - margin, 34);
+
+  const statusPaid = normalizeStatusLabel(invoice.status) === "Paid";
+
+  // Sections Configuration
+  const sections = [
+    {
+      title: "Client Details",
+      rows: [
+        ["Name", invoice.clientName || "—"],
+        ["Email", invoice.clientEmail || "—"],
+      ],
+    },
+    {
+      title: "Billing Details",
+      rows: [
+        ["Plan", invoice.planName || "—"],
+        ["Amount", formatCurrency(invoice.amount)], // Uses fixed formatter below
+        ["Billing Period", `${formatDateOnly(invoice.billingStartDate) || "—"} to ${formatDateOnly(invoice.billingEndDate) || "—"}`],
+      ],
+    },
+    {
+      title: "Status",
+      rows: [
+        ["Payment Status", normalizeStatusLabel(invoice.status)],
+        ["Payment Method", invoice.paymentMethod || "—"],
+        ["Transaction Ref", invoice.transactionReference || "—"],
+      ],
+    },
+  ];
+
+  let cursorY = 42;
+
+  sections.forEach((section) => {
+    // 1. Pre-calculate Box Height accurately based on text rows
+    let totalTextHeight = 0;
+    
+    // Set standard font settings temporarily to measure text accurately
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+
+    section.rows.forEach(([label, value]) => {
+      // Calculate remaining horizontal space available for the values
+      const maxValueWidth = (label === "Amount") ? contentWidth - 50 : contentWidth - 46;
+      const lines = pdf.splitTextToSize(String(value), maxValueWidth);
+      totalTextHeight += Math.max(1, lines.length) * 7;
+    });
+
+    // Box Height = Header offset padding (16mm) + content block + bottom padding (4mm)
+    const boxHeight = 16 + totalTextHeight + 4;
+
+    // Render Box Container
+    pdf.setFillColor(249, 250, 251);
+    pdf.roundedRect(margin, cursorY, contentWidth, boxHeight, 3, 3, "F");
+
+    pdf.setDrawColor(229, 231, 235);
+    pdf.roundedRect(margin, cursorY, contentWidth, boxHeight, 3, 3, "S");
+
+    // Container Header Title
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(12);
+    pdf.setTextColor(17, 24, 39);
+    pdf.text(section.title, margin + 12, cursorY + 9);
+
+    pdf.setDrawColor(229, 231, 235);
+    pdf.line(margin + 12, cursorY + 13, pageWidth - margin - 12, cursorY + 13);
+
+    // Render Data Rows
+    let rowY = cursorY + 20;
+
+    section.rows.forEach(([label, value]) => {
+      // Left Label
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.setTextColor(75, 85, 99);
+      pdf.text(`${label}:`, margin + 12, rowY);
+
+      // Right Side Value
+      pdf.setTextColor(17, 24, 39);
+      
+      if (label === "Amount") {
+        // Fix standard alignment & text breaking bugs for amounts 
+        pdf.setFont("helvetica", "bold"); 
+        pdf.text(String(value), pageWidth - margin - 12, rowY, { align: "right" });
+        rowY += 7;
+      } else {
+        const lines = pdf.splitTextToSize(String(value), contentWidth - 46);
+        pdf.text(lines, margin + 46, rowY);
+        rowY += lines.length * 7;
+      }
+    });
+
+    // Status Badge Component
+    if (section.title === "Status") {
+      const badgeText = statusPaid ? "PAID" : "UNPAID";
+      // Using accessible, readable colors matching Tailwind configurations
+      const badgeBgColor = statusPaid ? [220, 252, 231] : [254, 243, 199]; // Light green / Light amber
+      const badgeTextColor = statusPaid ? [21, 128, 61] : [180, 83, 9];   // Dark green / Dark amber
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      
+      const badgeWidth = pdf.getTextWidth(badgeText) + 8;
+      const badgeHeight = 6;
+
+      // Draw Badge Background Box
+      pdf.setFillColor(...badgeBgColor);
+      pdf.roundedRect(
+        pageWidth - margin - 12 - badgeWidth,
+        cursorY + 5,
+        badgeWidth,
+        badgeHeight,
+        1.5,
+        1.5,
+        "F"
+      );
+
+      // Render Badge Text
+      pdf.setTextColor(...badgeTextColor);
+      pdf.text(
+        badgeText,
+        pageWidth - margin - 12 - badgeWidth / 2,
+        cursorY + 5 + 4.5,
+        { align: "center" }
+      );
+    }
+
+    // Advance block cursor position safely
+    cursorY += boxHeight + 6;
+  });
+
+  // Global Page Footer
+  pdf.setDrawColor(229, 231, 235);
+  pdf.line(margin, pageHeight - 22, pageWidth - margin, pageHeight - 22);
+
+  pdf.setFont("helvetica", "italic");
+  pdf.setFontSize(9);
+  pdf.setTextColor(107, 114, 128);
+
+  pdf.text("Internal Invoice — SHIELD", margin, pageHeight - 14);
+  pdf.text("Thank you for working with us", pageWidth / 2, pageHeight - 14, {
+    align: "center",
+  });
+
+  // Export File
+  pdf.save(`${invoice.invoiceId || "SHIELD-invoice"}.pdf`);
 }
 
 function startOfDay(date) {
@@ -42,19 +357,43 @@ function getDaysRemaining(endDateValue) {
   if (!endDateValue) return null;
   const endDate = new Date(endDateValue);
   if (Number.isNaN(endDate.getTime())) return null;
-  const diffMs = startOfDay(endDate).getTime() - startOfDay(new Date()).getTime();
+  const diffMs =
+    startOfDay(endDate).getTime() - startOfDay(new Date()).getTime();
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 }
 
-const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus, focusRequestId }) => {
+function dateKey(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+}
+
+function sameBillingCycle(request, invoice) {
+  return (
+    dateKey(request?.billingStartDate) === dateKey(invoice?.billingStartDate) &&
+    dateKey(request?.billingEndDate) === dateKey(invoice?.billingEndDate)
+  );
+}
+
+const ServiceRequestsTab = ({
+  data = [],
+  invoicesData = [],
+  onDelete,
+  onUpdatePlan,
+  onUpdateStatus,
+  focusRequestId,
+}) => {
   const [menuOpen, setMenuOpen] = useState(null);
-  const [query, setQuery] = useState('');
-  const [filterSource, setFilterSource] = useState('any');
-  const [filterAccepted, setFilterAccepted] = useState('any');
-  const [filterPlan, setFilterPlan] = useState('any');
-  const [sortBy, setSortBy] = useState('createdDesc');
+  const [query, setQuery] = useState("");
+  const [filterSource, setFilterSource] = useState("any");
+  const [filterAccepted, setFilterAccepted] = useState("any");
+  const [filterPlan, setFilterPlan] = useState("any");
+  const [filterRequestStatus, setFilterRequestStatus] = useState("any");
+  const [filterBillingState, setFilterBillingState] = useState("any");
+  const [sortBy, setSortBy] = useState("createdDesc");
   const [updatePlanModal, setUpdatePlanModal] = useState(null);
-  const [newPlan, setNewPlan] = useState('');
+  const [newPlan, setNewPlan] = useState("");
   const [creditModal, setCreditModal] = useState(null);
   const [requestCredits, setRequestCredits] = useState({});
   const [notesDrafts, setNotesDrafts] = useState({});
@@ -64,7 +403,19 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
   const [websiteBuildingDirty, setWebsiteBuildingDirty] = useState({});
   const [websiteBuildingSaving, setWebsiteBuildingSaving] = useState({});
   const [focusedCardId, setFocusedCardId] = useState(null);
+  const [invoiceModal, setInvoiceModal] = useState({
+    open: false,
+    mode: "edit",
+    draft: null,
+    invoiceId: null,
+    saving: false,
+  });
   const [confirmModal, setConfirmModal] = useState({ open: false });
+  const anyModalOpen =
+    !!updatePlanModal ||
+    !!creditModal ||
+    !!invoiceModal.open ||
+    !!confirmModal.open;
 
   const toggleMenu = (index) => {
     setMenuOpen(menuOpen === index ? null : index);
@@ -72,15 +423,15 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
 
   // Disable dashboard elevation while modal is open to avoid hover flicker
   useEffect(() => {
-    const el = document.getElementById('dashboard-screen');
+    const el = document.getElementById("dashboard-screen");
     if (!el) return;
-    if (updatePlanModal) {
-      el.classList.add('no-elevate');
+    if (anyModalOpen) {
+      el.classList.add("no-elevate");
     } else {
-      el.classList.remove('no-elevate');
+      el.classList.remove("no-elevate");
     }
-    return () => el.classList.remove('no-elevate');
-  }, [updatePlanModal]);
+    return () => el.classList.remove("no-elevate");
+  }, [anyModalOpen]);
 
   // Initialize local credits map from incoming data (if documents already have `credits`)
   useEffect(() => {
@@ -94,7 +445,8 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         };
       }
     });
-    if (Object.keys(map).length) setRequestCredits(prev => ({ ...prev, ...map }));
+    if (Object.keys(map).length)
+      setRequestCredits((prev) => ({ ...prev, ...map }));
   }, [data]);
 
   useEffect(() => {
@@ -105,7 +457,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
       let changed = false;
       data.forEach((request) => {
         if (!request?.id || notesDirty[request.id]) return;
-        const incoming = String(request.notes || '');
+        const incoming = String(request.notes || "");
         if (next[request.id] !== incoming) {
           next[request.id] = incoming;
           changed = true;
@@ -138,7 +490,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
     const el = document.getElementById(`service-request-${focusRequestId}`);
     if (!el) return;
 
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
     setFocusedCardId(focusRequestId);
     const timer = window.setTimeout(() => setFocusedCardId(null), 2200);
     return () => window.clearTimeout(timer);
@@ -146,19 +498,409 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
 
   const handleUpdatePlan = (request) => {
     setUpdatePlanModal(request);
-    setNewPlan(request.plan || '');
+    setNewPlan(request.plan || "");
     setMenuOpen(null);
   };
 
   const handleOpenCreditModal = (request) => {
     setCreditModal(request);
     if (!requestCredits[request.id]) {
-      setRequestCredits(prev => ({
+      setRequestCredits((prev) => ({
         ...prev,
-        [request.id]: { largeCommits: 0, smallChanges: 0 }
+        [request.id]: { largeCommits: 0, smallChanges: 0 },
       }));
     }
     setMenuOpen(null);
+  };
+
+  function getAlertType(daysRemaining) {
+    if (daysRemaining === null) return null;
+    if (daysRemaining <= 0) return "expired";
+    if (daysRemaining <= 2) return "2_day_warning";
+    if (daysRemaining <= 5) return "5_day_warning";
+    if (daysRemaining <= 10) return "10_day_warning";
+    return null;
+  }
+  const invoicesByRequest = useMemo(() => {
+    const map = {};
+    (invoicesData || []).forEach((invoice) => {
+      const key = invoice.requestId;
+      if (!key) return;
+      if (!map[key]) map[key] = [];
+      map[key].push(invoice);
+    });
+
+    Object.keys(map).forEach((key) => {
+      map[key].sort((a, b) => {
+        const aTime = new Date(
+          a.createdAt || a.billingStartDate || 0,
+        ).getTime();
+        const bTime = new Date(
+          b.createdAt || b.billingStartDate || 0,
+        ).getTime();
+        return bTime - aTime;
+      });
+    });
+
+    return map;
+  }, [invoicesData]);
+
+  const invoiceStatsByRequest = useMemo(() => {
+    const map = {};
+
+    (data || []).forEach((request) => {
+      const requestInvoices = invoicesByRequest[request.id] || [];
+      const unpaidInvoices = requestInvoices.filter(
+        (invoice) =>
+          String(invoice.status || "unpaid").toLowerCase() === "unpaid",
+      );
+      const currentCycleUnpaidInvoice =
+        unpaidInvoices.find((invoice) => sameBillingCycle(request, invoice)) ||
+        null;
+
+      map[request.id] = {
+        requestInvoices,
+        unpaidInvoices,
+        unpaidCount: unpaidInvoices.length,
+        hasUnpaidInvoice: unpaidInvoices.length > 0,
+        currentCycleUnpaidInvoice,
+      };
+    });
+
+    return map;
+  }, [data, invoicesByRequest]);
+
+  const openInvoiceModal = (invoice, mode = "edit") => {
+    if (!invoice) return;
+    setInvoiceModal({
+      open: true,
+      mode,
+      invoiceId: invoice.id,
+      requestId: invoice.requestId || "",
+      draft: {
+        clientName: invoice.clientName || "",
+        clientEmail: invoice.clientEmail || "",
+        planName: invoice.planName || "",
+        amount: String(invoice.amount ?? ""),
+        billingStartDate: toDateInputValue(invoice.billingStartDate),
+        billingEndDate: toDateInputValue(invoice.billingEndDate),
+        status: mode === "markPaid" ? "paid" : invoice.status || "unpaid",
+        paymentMethod: invoice.paymentMethod || "",
+        transactionReference: invoice.transactionReference || "",
+      },
+      saving: false,
+    });
+  };
+
+  const openGenerateInvoiceModal = (request) => {
+    if (!request?.id) return;
+    setInvoiceModal({
+      open: true,
+      mode: "generate",
+      requestId: request.id,
+      requestName: request.name || "",
+      draft: getInvoiceDraftFromRequest(request),
+      saving: false,
+    });
+  };
+
+  const closeInvoiceModal = () => {
+    setInvoiceModal({
+      open: false,
+      mode: "edit",
+      draft: null,
+      invoiceId: null,
+      requestId: null,
+      requestName: "",
+      saving: false,
+    });
+  };
+
+  const updateInvoiceDraft = (field, value) => {
+    setInvoiceModal((prev) => ({
+      ...prev,
+      draft: {
+        ...(prev.draft || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const generateInvoiceForRequest = async (request) => {
+    if (!request?.id) return;
+    if (invoiceStatsByRequest[request.id]?.currentCycleUnpaidInvoice) {
+      const existingInvoice =
+        invoiceStatsByRequest[request.id].currentCycleUnpaidInvoice;
+      showConfirm({
+        title: "Invoice Already Exists",
+        message: `An unpaid invoice already exists for this billing cycle${existingInvoice?.invoiceId ? ` (${existingInvoice.invoiceId})` : ""}. Update the existing invoice instead of creating a duplicate.`,
+        cancelLabel: "OK",
+      });
+      return;
+    }
+
+    openGenerateInvoiceModal(request);
+  };
+
+  const saveInvoiceModal = async () => {
+    if (!invoiceModal.open || !invoiceModal.draft) return;
+
+    const nextAmount = Number(invoiceModal.draft.amount || 0);
+    const nextStart = parseDateInputValue(invoiceModal.draft.billingStartDate);
+    const nextEnd = parseDateInputValue(invoiceModal.draft.billingEndDate);
+    const nextStatus =
+      String(invoiceModal.draft.status || "unpaid").toLowerCase() === "paid"
+        ? "paid"
+        : "unpaid";
+
+    setInvoiceModal((prev) => ({ ...prev, saving: true }));
+    try {
+      if (invoiceModal.mode === "generate") {
+        const request = data.find((item) => item.id === invoiceModal.requestId);
+        if (
+          request &&
+          invoiceStatsByRequest[request.id]?.currentCycleUnpaidInvoice
+        ) {
+          throw new Error(
+            "An unpaid invoice already exists for this billing cycle.",
+          );
+        }
+
+        const invoiceRef = doc(invoicesCollection);
+        const counterRef = doc(db, "system", "invoiceCounter");
+        let createdInvoiceId = "";
+
+        await runTransaction(db, async (transaction) => {
+          const counterSnap = await transaction.get(counterRef);
+          const lastNumber = counterSnap.exists()
+            ? Number(counterSnap.data()?.lastInvoiceNumber || 0)
+            : 0;
+          const nextNumber = lastNumber + 1;
+          createdInvoiceId = `SHIELD-${String(nextNumber).padStart(4, "0")}`;
+
+          const invoiceData = {
+            requestId: invoiceModal.requestId || "",
+            invoiceId: createdInvoiceId,
+            clientName: invoiceModal.draft.clientName || "",
+            clientEmail: invoiceModal.draft.clientEmail || "",
+            planName: invoiceModal.draft.planName || "",
+            amount: Number.isFinite(nextAmount) ? nextAmount : 0,
+            billingStartDate: nextStart,
+            billingEndDate: nextEnd,
+            status: nextStatus,
+            paymentMethod: invoiceModal.draft.paymentMethod || "",
+            transactionReference: invoiceModal.draft.transactionReference || "",
+            createdAt: new Date().toISOString(),
+          };
+
+          transaction.set(invoiceRef, invoiceData);
+          if (counterSnap.exists()) {
+            transaction.update(counterRef, {
+              lastInvoiceNumber: nextNumber,
+              updatedAt: new Date().toISOString(),
+            });
+          } else {
+            transaction.set(counterRef, {
+              lastInvoiceNumber: nextNumber,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        });
+
+        closeInvoiceModal();
+        showConfirm({
+          title: "Done",
+          message: `Invoice generated${createdInvoiceId ? ` (${createdInvoiceId})` : ""}.`,
+          cancelLabel: "OK",
+        });
+      } else {
+        const invoiceRef = doc(db, "invoices", invoiceModal.invoiceId);
+        const requestRef = invoiceModal.requestId
+          ? doc(db, "serviceRequests", invoiceModal.requestId)
+          : null;
+
+        await runTransaction(db, async (transaction) => {
+          transaction.update(invoiceRef, {
+            clientName: invoiceModal.draft.clientName || "",
+            clientEmail: invoiceModal.draft.clientEmail || "",
+            planName: invoiceModal.draft.planName || "",
+            amount: Number.isFinite(nextAmount) ? nextAmount : 0,
+            billingStartDate: nextStart,
+            billingEndDate: nextEnd,
+            status: nextStatus,
+            paymentMethod: invoiceModal.draft.paymentMethod || "",
+            transactionReference: invoiceModal.draft.transactionReference || "",
+            updatedAt: new Date().toISOString(),
+          });
+
+          const linkedRequest = requestRef
+            ? data.find((item) => item.id === invoiceModal.requestId)
+            : null;
+
+          if (nextStatus === "paid" && requestRef && !linkedRequest?.isPaused) {
+            const cycleStart = nextEnd || new Date().toISOString();
+            const cycleEnd = addOneMonth(new Date(cycleStart)).toISOString();
+
+            transaction.update(requestRef, {
+              status: "active",
+              requesterStatus: "Active",
+              billingStartDate: cycleStart,
+              billingEndDate: cycleEnd,
+              liveDate: cycleStart,
+              renewalDate: cycleEnd,
+            });
+          }
+        });
+
+        closeInvoiceModal();
+        showConfirm({
+          title: "Done",
+          message:
+            nextStatus === "paid"
+              ? requestRef &&
+                data.find((item) => item.id === invoiceModal.requestId)
+                  ?.isPaused
+                ? "Invoice paid. Billing cycle was not advanced because the website is paused."
+                : "Invoice paid and billing cycle renewed."
+              : "Invoice updated.",
+          cancelLabel: "OK",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to update invoice:", err);
+      showConfirm({
+        title: "Error",
+        message: "Failed to update invoice. Please try again.",
+        cancelLabel: "OK",
+      });
+    } finally {
+      setInvoiceModal((prev) => ({ ...prev, saving: false }));
+    }
+  };
+
+  const copyToClipboard = async (text, successMessage) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      showConfirm({
+        title: "Done",
+        message: successMessage,
+        cancelLabel: "OK",
+      });
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+      showConfirm({
+        title: "Error",
+        message: "Failed to copy message. Please try again.",
+        cancelLabel: "OK",
+      });
+    }
+  };
+
+  const handleCopyInvoiceMessage = (invoice) =>
+    copyToClipboard(buildInvoiceMessage(invoice), "Message copied");
+  const handleCopyShortInvoiceMessage = (invoice) =>
+    copyToClipboard(buildShortInvoiceMessage(invoice), "Message copied");
+  const handleDownloadInvoice = async (invoice) => buildInvoicePdf(invoice);
+
+  const handleViewRequest = (requestId) => {
+    if (!requestId) return;
+    setMenuOpen(null);
+    setUpdatePlanModal(null);
+    setCreditModal(null);
+    setInvoiceModal({
+      open: false,
+      mode: "edit",
+      draft: null,
+      invoiceId: null,
+      requestId: null,
+      requestName: "",
+      saving: false,
+    });
+    const el = document.getElementById(`service-request-${requestId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      setFocusedCardId(requestId);
+      window.setTimeout(() => setFocusedCardId(null), 2200);
+    }
+  };
+
+  const handlePauseWebsite = async (request, shouldPause) => {
+    if (!request?.id) return;
+
+    showConfirm({
+      title: shouldPause ? "Pause Website" : "Resume Website",
+      message: shouldPause
+        ? `Pause billing updates for ${request.name || request.email || request.id}? The request status will stay as-is.`
+        : `Resume billing updates for ${request.name || request.email || request.id}?`,
+      confirmLabel: shouldPause ? "Pause" : "Resume",
+      cancelLabel: "Cancel",
+      destructive: shouldPause,
+      onConfirm: async () => {
+        try {
+          await updateDoc(doc(db, "serviceRequests", request.id), {
+            isPaused: shouldPause,
+            pausedAt: shouldPause ? new Date().toISOString() : null,
+          });
+          closeConfirm();
+          showConfirm({
+            title: shouldPause ? "Paused" : "Resumed",
+            message: shouldPause
+              ? "Website billing updates are paused."
+              : "Website billing updates are active again.",
+            cancelLabel: "OK",
+          });
+          setMenuOpen(null);
+        } catch (err) {
+          console.error("Failed to update pause state:", err);
+          closeConfirm();
+          showConfirm({
+            title: "Error",
+            message: "Failed to update pause state. Please try again.",
+            cancelLabel: "OK",
+          });
+        }
+      },
+    });
+  };
+
+  const handleDeleteInvoice = (invoice) => {
+    if (!invoice?.id) return;
+
+    showConfirm({
+      title: "Delete Invoice",
+      message: `Delete invoice ${invoice.invoiceId || invoice.id}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "invoices", invoice.id));
+          closeConfirm();
+          showConfirm({
+            title: "Deleted",
+            message: "Invoice deleted.",
+            cancelLabel: "OK",
+          });
+        } catch (err) {
+          console.error("Failed to delete invoice:", err);
+          closeConfirm();
+          showConfirm({
+            title: "Error",
+            message: "Failed to delete invoice. Please try again.",
+            cancelLabel: "OK",
+          });
+        }
+      },
+    });
   };
 
   const handleNotesChange = (requestId, value) => {
@@ -175,13 +917,13 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
   const handleSaveNotes = async (request) => {
     if (!request?.id) return;
 
-    const draft = String(notesDrafts[request.id] ?? request.notes ?? '');
-    const persisted = String(request.notes ?? '');
+    const draft = String(notesDrafts[request.id] ?? request.notes ?? "");
+    const persisted = String(request.notes ?? "");
     if (draft === persisted) return;
 
     setNotesSaving((prev) => ({ ...prev, [request.id]: true }));
     try {
-      await updateDoc(doc(db, 'serviceRequests', request.id), {
+      await updateDoc(doc(db, "serviceRequests", request.id), {
         notes: draft,
         notesUpdatedAt: new Date().toISOString(),
       });
@@ -191,11 +933,11 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         [request.id]: false,
       }));
     } catch (err) {
-      console.error('Failed to save request notes:', err);
+      console.error("Failed to save request notes:", err);
       showConfirm({
-        title: 'Error',
-        message: 'Failed to save notes. Please try again.',
-        cancelLabel: 'OK',
+        title: "Error",
+        message: "Failed to save notes. Please try again.",
+        cancelLabel: "OK",
       });
     } finally {
       setNotesSaving((prev) => ({ ...prev, [request.id]: false }));
@@ -206,7 +948,9 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
     if (!request?.id) return;
 
     const baseDate = getRequestBaseDate(request);
-    const nextBillingStartDate = nextValue ? addOneMonth(baseDate).toISOString() : null;
+    const nextBillingStartDate = nextValue
+      ? addOneMonth(baseDate).toISOString()
+      : null;
 
     setWebsiteBuildingDrafts((prev) => ({
       ...prev,
@@ -222,7 +966,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
     }));
 
     try {
-      await updateDoc(doc(db, 'serviceRequests', request.id), {
+      await updateDoc(doc(db, "serviceRequests", request.id), {
         includesWebsiteBuilding: nextValue,
         billingStartDate: nextBillingStartDate,
       });
@@ -232,7 +976,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         [request.id]: false,
       }));
     } catch (err) {
-      console.error('Failed to save website-building toggle:', err);
+      console.error("Failed to save website-building toggle:", err);
       setWebsiteBuildingDrafts((prev) => ({
         ...prev,
         [request.id]: !!request.includesWebsiteBuilding,
@@ -242,9 +986,9 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         [request.id]: false,
       }));
       showConfirm({
-        title: 'Error',
-        message: 'Failed to update website building setting. Please try again.',
-        cancelLabel: 'OK',
+        title: "Error",
+        message: "Failed to update website building setting. Please try again.",
+        cancelLabel: "OK",
       });
     } finally {
       setWebsiteBuildingSaving((prev) => ({
@@ -254,73 +998,121 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
     }
   };
 
-  const showConfirm = ({ title, message, onConfirm, confirmLabel, cancelLabel, destructive }) => {
-    setConfirmModal({ open: true, title, message, onConfirm, confirmLabel, cancelLabel, destructive });
+  const showConfirm = ({
+    title,
+    message,
+    onConfirm,
+    confirmLabel,
+    cancelLabel,
+    destructive,
+  }) => {
+    setConfirmModal({
+      open: true,
+      title,
+      message,
+      onConfirm,
+      confirmLabel,
+      cancelLabel,
+      destructive,
+    });
   };
 
   const closeConfirm = () => setConfirmModal({ open: false });
 
-  const normalizeEmailLocal = (email) => String(email || '').trim().toLowerCase();
+  const normalizeEmailLocal = (email) =>
+    String(email || "")
+      .trim()
+      .toLowerCase();
 
   const handleClearPlan = async (request) => {
     if (!request || !request.id) return;
 
     showConfirm({
-      title: 'Clear Plan Details',
+      title: "Clear Plan Details",
       message: `Clear plan details and reset credits for ${request.name || request.email || request.id}?`,
-      confirmLabel: 'Clear Plan',
-      cancelLabel: 'Cancel',
+      confirmLabel: "Clear Plan",
+      cancelLabel: "Cancel",
       destructive: true,
       onConfirm: async () => {
-        const currentMonth = new Date().toISOString().slice(0,7);
-        const newCredits = { largeCommits: 0, smallChanges: 0, lastResetMonth: currentMonth };
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const newCredits = {
+          largeCommits: 0,
+          smallChanges: 0,
+          lastResetMonth: currentMonth,
+        };
         try {
-          await updateDoc(doc(db, 'serviceRequests', request.id), {
-            plan: 'To be discussed',
+          await updateDoc(doc(db, "serviceRequests", request.id), {
+            plan: "To be discussed",
             billingCycle: null,
             includesWebsiteBuilding: false,
             billingStartDate: null,
-            credits: newCredits
+            credits: newCredits,
           });
           // update local UI state
-          setRequestCredits(prev => ({ ...prev, [request.id]: { largeCommits: 0, smallChanges: 0 } }));
-          setWebsiteBuildingDrafts(prev => ({ ...prev, [request.id]: false }));
-          setWebsiteBuildingDirty(prev => ({ ...prev, [request.id]: false }));
+          setRequestCredits((prev) => ({
+            ...prev,
+            [request.id]: { largeCommits: 0, smallChanges: 0 },
+          }));
+          setWebsiteBuildingDrafts((prev) => ({
+            ...prev,
+            [request.id]: false,
+          }));
+          setWebsiteBuildingDirty((prev) => ({ ...prev, [request.id]: false }));
           closeConfirm();
-          showConfirm({ title: 'Done', message: 'Plan cleared and credits reset.', cancelLabel: 'OK' });
+          showConfirm({
+            title: "Done",
+            message: "Plan cleared and credits reset.",
+            cancelLabel: "OK",
+          });
         } catch (err) {
-          console.error('Failed to clear plan details:', err);
+          console.error("Failed to clear plan details:", err);
           closeConfirm();
-          showConfirm({ title: 'Error', message: 'Failed to clear plan. Check console for details.', cancelLabel: 'OK' });
+          showConfirm({
+            title: "Error",
+            message: "Failed to clear plan. Check console for details.",
+            cancelLabel: "OK",
+          });
         }
-      }
+      },
     });
   };
 
   const handleRemoveUser = async (request) => {
     if (!request || !request.email) {
-      showConfirm({ title: 'No Email', message: 'No user email available to remove.', cancelLabel: 'OK' });
+      showConfirm({
+        title: "No Email",
+        message: "No user email available to remove.",
+        cancelLabel: "OK",
+      });
       return;
     }
     const emailId = normalizeEmailLocal(request.email);
 
     showConfirm({
-      title: 'Remove User',
+      title: "Remove User",
       message: `Permanently remove user ${request.email}? This cannot be undone.`,
-      confirmLabel: 'Remove',
-      cancelLabel: 'Cancel',
+      confirmLabel: "Remove",
+      cancelLabel: "Cancel",
       destructive: true,
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'users', emailId));
+          await deleteDoc(doc(db, "users", emailId));
           closeConfirm();
-          showConfirm({ title: 'Removed', message: 'User removed.', cancelLabel: 'OK' });
+          showConfirm({
+            title: "Removed",
+            message: "User removed.",
+            cancelLabel: "OK",
+          });
         } catch (err) {
-          console.error('Failed to remove user:', err);
+          console.error("Failed to remove user:", err);
           closeConfirm();
-          showConfirm({ title: 'Error', message: 'Failed to remove user. Check console for details.', cancelLabel: 'OK' });
+          showConfirm({
+            title: "Error",
+            message: "Failed to remove user. Check console for details.",
+            cancelLabel: "OK",
+          });
         }
-      }
+      },
     });
   };
 
@@ -331,42 +1123,63 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
     const limits = TIER_LIMITS[plan];
     if (!limits) return;
 
-    const currentCredits = requestCredits[creditModal.id] || { largeCommits: 0, smallChanges: 0 };
+    const currentCredits = requestCredits[creditModal.id] || {
+      largeCommits: 0,
+      smallChanges: 0,
+    };
 
     let newCredits = { ...currentCredits };
 
-    if (type === 'largeCommit') {
-      if (limits.largeCommits !== null && currentCredits.largeCommits >= limits.largeCommits) {
-        showConfirm({ title: 'Limit reached', message: `Large Commit limit reached (${limits.largeCommits}/${limits.largeCommits})`, cancelLabel: 'OK' });
+    if (type === "largeCommit") {
+      if (
+        limits.largeCommits !== null &&
+        currentCredits.largeCommits >= limits.largeCommits
+      ) {
+        showConfirm({
+          title: "Limit reached",
+          message: `Large Commit limit reached (${limits.largeCommits}/${limits.largeCommits})`,
+          cancelLabel: "OK",
+        });
         return;
       }
       newCredits.largeCommits = currentCredits.largeCommits + 1;
-    } else if (type === 'smallChange') {
-      if (limits.smallChanges !== null && currentCredits.smallChanges >= limits.smallChanges) {
-        showConfirm({ title: 'Limit reached', message: `Small Change limit reached (${limits.smallChanges}/${limits.smallChanges})`, cancelLabel: 'OK' });
+    } else if (type === "smallChange") {
+      if (
+        limits.smallChanges !== null &&
+        currentCredits.smallChanges >= limits.smallChanges
+      ) {
+        showConfirm({
+          title: "Limit reached",
+          message: `Small Change limit reached (${limits.smallChanges}/${limits.smallChanges})`,
+          cancelLabel: "OK",
+        });
         return;
       }
       newCredits.smallChanges = currentCredits.smallChanges + 1;
     }
 
     // Update local state immediately for snappy UI
-    setRequestCredits(prev => ({
+    setRequestCredits((prev) => ({
       ...prev,
-      [creditModal.id]: newCredits
+      [creditModal.id]: newCredits,
     }));
 
     // Persist to Firestore
     try {
-      await updateDoc(doc(db, 'serviceRequests', creditModal.id), {
-        credits: newCredits
+      await updateDoc(doc(db, "serviceRequests", creditModal.id), {
+        credits: newCredits,
       });
     } catch (err) {
-      console.error('Failed to persist credits to Firestore:', err);
-      showConfirm({ title: 'Error', message: 'Failed to update credits in database. Please try again.', cancelLabel: 'OK' });
+      console.error("Failed to persist credits to Firestore:", err);
+      showConfirm({
+        title: "Error",
+        message: "Failed to update credits in database. Please try again.",
+        cancelLabel: "OK",
+      });
       // revert local state on failure
-      setRequestCredits(prev => ({
+      setRequestCredits((prev) => ({
         ...prev,
-        [creditModal.id]: currentCredits
+        [creditModal.id]: currentCredits,
       }));
     }
   };
@@ -374,36 +1187,43 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
   const removeCredit = async (type) => {
     if (!creditModal) return;
 
-    const currentCredits = requestCredits[creditModal.id] || { largeCommits: 0, smallChanges: 0 };
+    const currentCredits = requestCredits[creditModal.id] || {
+      largeCommits: 0,
+      smallChanges: 0,
+    };
     const original = { ...currentCredits };
     let newCredits = { ...currentCredits };
 
-    if (type === 'largeCommit') {
+    if (type === "largeCommit") {
       if (currentCredits.largeCommits <= 0) return;
       newCredits.largeCommits = currentCredits.largeCommits - 1;
-    } else if (type === 'smallChange') {
+    } else if (type === "smallChange") {
       if (currentCredits.smallChanges <= 0) return;
       newCredits.smallChanges = currentCredits.smallChanges - 1;
     }
 
     // Update local state immediately
-    setRequestCredits(prev => ({
+    setRequestCredits((prev) => ({
       ...prev,
-      [creditModal.id]: newCredits
+      [creditModal.id]: newCredits,
     }));
 
     // Persist to Firestore
     try {
-      await updateDoc(doc(db, 'serviceRequests', creditModal.id), {
-        credits: newCredits
+      await updateDoc(doc(db, "serviceRequests", creditModal.id), {
+        credits: newCredits,
       });
     } catch (err) {
-      console.error('Failed to persist credits removal to Firestore:', err);
-      showConfirm({ title: 'Error', message: 'Failed to update credits in database. Please try again.', cancelLabel: 'OK' });
+      console.error("Failed to persist credits removal to Firestore:", err);
+      showConfirm({
+        title: "Error",
+        message: "Failed to update credits in database. Please try again.",
+        cancelLabel: "OK",
+      });
       // revert local state on failure
-      setRequestCredits(prev => ({
+      setRequestCredits((prev) => ({
         ...prev,
-        [creditModal.id]: original
+        [creditModal.id]: original,
       }));
     }
   };
@@ -420,25 +1240,28 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
 
   const handleMakeLive = async (request) => {
     // Logic: 90 days for quarterly, 30 for monthly/default
-    const isQuarterly = request.billingCycle?.toLowerCase().includes('quarterly');
+    const isQuarterly = request.billingCycle
+      ?.toLowerCase()
+      .includes("quarterly");
     const days = isQuarterly ? 90 : 30;
 
-    const billingStart = request.includesWebsiteBuilding && request.billingStartDate
-      ? new Date(request.billingStartDate)
-      : request.includesWebsiteBuilding
-        ? addOneMonth(getRequestBaseDate(request))
-        : new Date();
+    const billingStart =
+      request.includesWebsiteBuilding && request.billingStartDate
+        ? new Date(request.billingStartDate)
+        : request.includesWebsiteBuilding
+          ? addOneMonth(getRequestBaseDate(request))
+          : new Date();
 
     const renewalDate = new Date(billingStart);
     renewalDate.setDate(renewalDate.getDate() + days);
 
-    await onUpdateStatus(request.id, { 
-      requesterStatus: 'Active',
-      status: 'active',
+    await onUpdateStatus(request.id, {
+      requesterStatus: "Active",
+      status: "active",
       billingStartDate: billingStart.toISOString(),
       billingEndDate: renewalDate.toISOString(),
       liveDate: new Date().toISOString(),
-      renewalDate: renewalDate.toISOString()
+      renewalDate: renewalDate.toISOString(),
     });
     setMenuOpen(null);
   };
@@ -448,33 +1271,115 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
     try {
       await onUpdatePlan(updatePlanModal.id, newPlan);
       setUpdatePlanModal(null);
-      setNewPlan('');
+      setNewPlan("");
     } catch (error) {
-      showConfirm({ title: 'Error', message: 'Failed to update plan. Please try again.', cancelLabel: 'OK' });
+      showConfirm({
+        title: "Error",
+        message: "Failed to update plan. Please try again.",
+        cancelLabel: "OK",
+      });
     }
   };
-  
+
   const cancelUpdatePlan = () => {
     setUpdatePlanModal(null);
-    setNewPlan('');
+    setNewPlan("");
   };
 
   const filtered = useMemo(() => {
-    const q = String(query || '').trim().toLowerCase();
+    const q = String(query || "")
+      .trim()
+      .toLowerCase();
 
     const arr = (data || []).filter((req) => {
-      if (filterSource !== 'any' && (req.source || '') !== filterSource) return false;
+      const requestStatus = String(req.requesterStatus || "").toLowerCase();
+      const isPaused = !!req.isPaused;
+      const billingDaysRemaining = getDaysRemaining(req.billingEndDate);
+      const alertType = getAlertType(billingDaysRemaining);
+      const invoiceStats = invoiceStatsByRequest[req.id] || {
+        currentCycleUnpaidInvoice: null,
+        hasUnpaidInvoice: false,
+      };
 
-      if (filterAccepted !== 'any') {
+      if (filterSource !== "any" && (req.source || "") !== filterSource)
+        return false;
+
+      if (filterAccepted !== "any") {
         const accepted = !!req.acceptedTerms;
-        if (filterAccepted === 'yes' && !accepted) return false;
-        if (filterAccepted === 'no' && accepted) return false;
+        if (filterAccepted === "yes" && !accepted) return false;
+        if (filterAccepted === "no" && accepted) return false;
       }
 
-      if (filterPlan !== 'any' && (req.plan || '') !== filterPlan) return false;
+      if (filterPlan !== "any" && (req.plan || "") !== filterPlan) return false;
+
+      if (filterRequestStatus !== "any") {
+        if (filterRequestStatus === "paused" && !isPaused) return false;
+        else if (filterRequestStatus === "active" && requestStatus !== "active")
+          return false;
+        else if (
+          filterRequestStatus === "expired" &&
+          requestStatus !== "expired"
+        )
+          return false;
+        else if (
+          filterRequestStatus === "building" &&
+          requestStatus !== "building"
+        )
+          return false;
+        else if (
+          filterRequestStatus === "negotiating" &&
+          requestStatus !== "negotiating"
+        )
+          return false;
+        else if (
+          filterRequestStatus === "in review" &&
+          requestStatus !== "in review"
+        )
+          return false;
+        else if (
+          filterRequestStatus === "to be discussed" &&
+          String(req.plan || "").toLowerCase() !== "to be discussed"
+        )
+          return false;
+      }
+
+      if (filterBillingState !== "any") {
+        if (filterBillingState === "paused" && !isPaused) return false;
+        if (
+          filterBillingState === "expired" &&
+          !(billingDaysRemaining !== null && billingDaysRemaining <= 0)
+        )
+          return false;
+        if (
+          filterBillingState === "expiring_10" &&
+          alertType !== "10_day_warning"
+        )
+          return false;
+        if (
+          filterBillingState === "expiring_5" &&
+          alertType !== "5_day_warning"
+        )
+          return false;
+        if (
+          filterBillingState === "expiring_2" &&
+          alertType !== "2_day_warning"
+        )
+          return false;
+        if (
+          filterBillingState === "unpaid_invoice" &&
+          !invoiceStats.hasUnpaidInvoice
+        )
+          return false;
+        if (
+          filterBillingState === "current_cycle_unpaid" &&
+          !invoiceStats.currentCycleUnpaidInvoice
+        )
+          return false;
+      }
 
       if (!q) return true;
 
+      const requestInvoices = invoiceStats.requestInvoices || [];
       const hay = [
         req.name,
         req.email,
@@ -483,26 +1388,55 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         req.requirements,
         req.projectReference,
         req.requesterStatus,
-        req.billingCycle
+        req.billingCycle,
+        req.plan,
+        req.source,
+        req.isPaused ? "paused" : "",
+        requestInvoices
+          .map((invoice) =>
+            [
+              invoice.invoiceId,
+              invoice.clientName,
+              invoice.clientEmail,
+              invoice.transactionReference,
+            ]
+              .filter(Boolean)
+              .join(" "),
+          )
+          .join(" "),
       ]
-        .join(' ')
+        .join(" ")
         .toLowerCase();
 
       return hay.includes(q);
     });
 
-    if (sortBy === 'createdAsc') {
+    if (sortBy === "createdAsc") {
       arr.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    } else if (sortBy === 'createdDesc') {
+    } else if (sortBy === "createdDesc") {
       arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    } else if (sortBy === 'nameAsc') {
-      arr.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-    } else if (sortBy === 'nameDesc') {
-      arr.sort((a, b) => String(b.name || '').localeCompare(String(a.name || '')));
+    } else if (sortBy === "nameAsc") {
+      arr.sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || "")),
+      );
+    } else if (sortBy === "nameDesc") {
+      arr.sort((a, b) =>
+        String(b.name || "").localeCompare(String(a.name || "")),
+      );
     }
 
     return arr;
-  }, [data, query, filterSource, filterAccepted, filterPlan, sortBy]);
+  }, [
+    data,
+    query,
+    filterSource,
+    filterAccepted,
+    filterPlan,
+    filterRequestStatus,
+    filterBillingState,
+    sortBy,
+    invoiceStatsByRequest,
+  ]);
 
   return (
     <div className="service-requests-tab">
@@ -518,22 +1452,11 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
 
         <CustomDropdown
           options={[
-            { value: 'any', label: 'Any terms' },
-            { value: 'yes', label: 'Accepted' },
-            { value: 'no', label: 'Not accepted' },
-          ]}
-          selected={filterAccepted}
-          onChange={(v) => setFilterAccepted(v)}
-          placeholder="Accepted"
-        />
-
-        <CustomDropdown
-          options={[
-            { value: 'any', label: 'Any Plan' },
-            { value: 'Starter Plan', label: 'Starter Plan' },
-            { value: 'Premium Plan', label: 'Premium Plan' },
-            { value: 'Elite Plan', label: 'Elite Plan' },
-            { value: 'To be discussed', label: 'To be discussed' },
+            { value: "any", label: "Any Plan" },
+            { value: "Starter Plan", label: "Starter Plan" },
+            { value: "Premium Plan", label: "Premium Plan" },
+            { value: "Elite Plan", label: "Elite Plan" },
+            { value: "To be discussed", label: "To be discussed" },
           ]}
           selected={filterPlan}
           onChange={(v) => setFilterPlan(v)}
@@ -542,10 +1465,41 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
 
         <CustomDropdown
           options={[
-            { value: 'createdDesc', label: 'Newest' },
-            { value: 'createdAsc', label: 'Oldest' },
-            { value: 'nameAsc', label: 'Name A→Z' },
-            { value: 'nameDesc', label: 'Name Z→A' },
+            { value: "any", label: "Any Status" },
+            { value: "active", label: "Active" },
+            { value: "paused", label: "Paused" },
+            { value: "expired", label: "Expired" },
+            { value: "negotiating", label: "Negotiating" },
+            { value: "building", label: "Building" },
+            { value: "in review", label: "In Review" },
+          ]}
+          selected={filterRequestStatus}
+          onChange={(v) => setFilterRequestStatus(v)}
+          placeholder="Request Status"
+        />
+
+        <CustomDropdown
+          options={[
+            { value: "any", label: "Any Billing State" },
+            { value: "paused", label: "Paused Billing" },
+            { value: "expired", label: "Expired Billing" },
+            { value: "expiring_10", label: "Expiring in 10 Days" },
+            { value: "expiring_5", label: "Expiring in 5 Days" },
+            { value: "expiring_2", label: "Expiring in 2 Days" },
+            { value: "unpaid_invoice", label: "Has Unpaid Invoice" },
+            { value: "current_cycle_unpaid", label: "Current Cycle Unpaid" },
+          ]}
+          selected={filterBillingState}
+          onChange={(v) => setFilterBillingState(v)}
+          placeholder="Billing"
+        />
+
+        <CustomDropdown
+          options={[
+            { value: "createdDesc", label: "Newest" },
+            { value: "createdAsc", label: "Oldest" },
+            { value: "nameAsc", label: "Name A→Z" },
+            { value: "nameDesc", label: "Name Z→A" },
           ]}
           selected={sortBy}
           onChange={(v) => setSortBy(v)}
@@ -556,39 +1510,78 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
       </div>
 
       {filtered.map((request, index) => {
-        const src = String(request.source || 'unknown');
-        const srcClass = `source-${src.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
-        const isOverdue = request.renewalDate && new Date(request.renewalDate) < new Date();
-        const includesWebsiteBuilding = websiteBuildingDrafts[request.id] ?? !!request.includesWebsiteBuilding;
-        const isLive = String(request.requesterStatus || '').toLowerCase() === 'active';
-        const billingStartDate = request.billingStartDate ? new Date(request.billingStartDate) : null;
-        const websiteBuildingWindowOpen = !billingStartDate || Number.isNaN(billingStartDate.getTime()) || new Date() < billingStartDate;
+        const src = String(request.source || "unknown");
+        const srcClass = `source-${src.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
+        const isOverdue =
+          request.renewalDate && new Date(request.renewalDate) < new Date();
+        const includesWebsiteBuilding =
+          websiteBuildingDrafts[request.id] ??
+          !!request.includesWebsiteBuilding;
+        const isLive =
+          String(request.requesterStatus || "").toLowerCase() === "active";
+        const billingStartDate = request.billingStartDate
+          ? new Date(request.billingStartDate)
+          : null;
+        const websiteBuildingWindowOpen =
+          !billingStartDate ||
+          Number.isNaN(billingStartDate.getTime()) ||
+          new Date() < billingStartDate;
         const showWebsiteBuildingOption = isLive && websiteBuildingWindowOpen;
         const billingDaysRemaining = getDaysRemaining(request.billingEndDate);
-        const isBillingExpired = billingDaysRemaining !== null && billingDaysRemaining <= 0;
+        const isBillingExpired =
+          billingDaysRemaining !== null && billingDaysRemaining <= 0;
         const showBillingBadge = billingDaysRemaining !== null;
+        const requestInvoices = invoicesByRequest[request.id] || [];
+        const invoiceStats = invoiceStatsByRequest[request.id] || {
+          hasUnpaidInvoice: false,
+          currentCycleUnpaidInvoice: null,
+        };
+        const isPaused = !!request.isPaused;
 
         return (
           <div
             key={request.id || index}
             id={request.id ? `service-request-${request.id}` : undefined}
-            className={`request-card ${isOverdue ? 'card-overdue' : ''}`}
-            style={focusedCardId === request.id ? { boxShadow: '0 0 0 2px #f59e0b, 0 0 0 6px rgba(245, 158, 11, 0.18)' } : undefined}
+            className={`request-card ${isOverdue ? "card-overdue" : ""}`}
+            style={
+              focusedCardId === request.id
+                ? {
+                    boxShadow:
+                      "0 0 0 2px #f59e0b, 0 0 0 6px rgba(245, 158, 11, 0.18)",
+                  }
+                : undefined
+            }
           >
             <div className="card-header">
               <h3>{request.name}</h3>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {isPaused && (
+                  <span
+                    className="badge"
+                    style={{
+                      background: "rgba(168, 85, 247, 0.18)",
+                      border: "1px solid #a855f7",
+                      color: "#e9d5ff",
+                    }}
+                  >
+                    PAUSED
+                  </span>
+                )}
                 {showBillingBadge && (
                   <span
                     className="badge"
                     style={{
-                      background: isBillingExpired ? '#7f1d1d' : 'rgba(245, 158, 11, 0.22)',
-                      border: `1px solid ${isBillingExpired ? '#ef4444' : '#f59e0b'}`,
-                      color: isBillingExpired ? '#fecaca' : '#fde68a',
+                      background: isBillingExpired
+                        ? "#7f1d1d"
+                        : "rgba(245, 158, 11, 0.22)",
+                      border: `1px solid ${isBillingExpired ? "#ef4444" : "#f59e0b"}`,
+                      color: isBillingExpired ? "#fecaca" : "#fde68a",
                     }}
                   >
-                    {isBillingExpired ? 'Expired' : `Expiring in ${billingDaysRemaining} days`}
+                    {isBillingExpired
+                      ? "Expired"
+                      : `Expiring in ${billingDaysRemaining} days`}
                   </span>
                 )}
                 <span className={`badge ${srcClass}`}>{src}</span>
@@ -597,7 +1590,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
                   <span
                     className="menu-icon"
                     onClick={() => toggleMenu(index)}
-                    style={{ cursor: 'pointer', fontSize: '1.5rem' }}
+                    style={{ cursor: "pointer", fontSize: "1.5rem" }}
                   >
                     &#x22EE;
                   </span>
@@ -605,55 +1598,376 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
                   {menuOpen === index && (
                     <div className="menu-dropdown">
                       {/* PIPELINE ACTIONS */}
-                      {!(request.requesterStatus && String(request.requesterStatus).toLowerCase() === 'active') && (
+                      {!(
+                        request.requesterStatus &&
+                        String(request.requesterStatus).toLowerCase() ===
+                          "active"
+                      ) && (
                         <>
-                          <span className="menu-item" onClick={() => updateStatus(request.id, 'Negotiating')}>Negotiating</span>
-                          <span className="menu-item" onClick={() => updateStatus(request.id, 'Building')}>Building</span>
-                          <span className="menu-item" onClick={() => updateStatus(request.id, 'In Review')}>In Review</span>
+                          <span
+                            className="menu-item"
+                            onClick={() =>
+                              updateStatus(request.id, "Negotiating")
+                            }
+                          >
+                            Negotiating
+                          </span>
+                          <span
+                            className="menu-item"
+                            onClick={() => updateStatus(request.id, "Building")}
+                          >
+                            Building
+                          </span>
+                          <span
+                            className="menu-item"
+                            onClick={() =>
+                              updateStatus(request.id, "In Review")
+                            }
+                          >
+                            In Review
+                          </span>
                         </>
                       )}
-                      {request.plan && String(request.plan).toLowerCase() !== 'to be discussed' && (
-                        <span className="menu-item" onClick={() => handleMakeLive(request)} style={{color: '#10b981'}}>Go Live (Paid)</span>
-                      )}
+                      {request.plan &&
+                        String(request.plan).toLowerCase() !==
+                          "to be discussed" && (
+                          <span
+                            className="menu-item"
+                            onClick={() => handleMakeLive(request)}
+                            style={{ color: "#10b981" }}
+                          >
+                            Go Live (Paid)
+                          </span>
+                        )}
                       <hr className="menu-divider" />
-                      <span className="menu-item" onClick={() => handleOpenCreditModal(request)} style={{color: '#fbbf24'}}>Manage Credits</span>
-                      <span className="menu-item" onClick={() => handleClearPlan(request)}>Clear Plan Details</span>
-                      <span className="menu-item" onClick={() => handleUpdatePlan(request)}>Update Plan</span>
-                      {request.requesterStatus && String(request.requesterStatus).toLowerCase() === 'active' && (
-                        <span className="menu-item" onClick={() => handleRemoveUser(request)} style={{ color: '#ef4444' }}>Remove User</span>
-                      )}
-                      <span className="menu-item" onClick={() => onDelete(request.id)} style={{ color: 'red' }}>Delete Request</span>
+                      <span
+                        className="menu-item"
+                        onClick={() => handlePauseWebsite(request, !isPaused)}
+                        style={{ color: isPaused ? "#22c55e" : "#f59e0b" }}
+                      >
+                        {isPaused ? "Resume Website" : "Pause Website"}
+                      </span>
+                      <span
+                        className="menu-item"
+                        onClick={() => handleOpenCreditModal(request)}
+                        style={{ color: "#fbbf24" }}
+                      >
+                        Manage Credits
+                      </span>
+                      <span
+                        className="menu-item"
+                        onClick={() => handleClearPlan(request)}
+                      >
+                        Clear Plan Details
+                      </span>
+                      <span
+                        className="menu-item"
+                        onClick={() => handleUpdatePlan(request)}
+                      >
+                        Update Plan
+                      </span>
+                      {request.requesterStatus &&
+                        String(request.requesterStatus).toLowerCase() ===
+                          "active" && (
+                          <span
+                            className="menu-item"
+                            onClick={() => handleRemoveUser(request)}
+                            style={{ color: "#ef4444" }}
+                          >
+                            Remove User
+                          </span>
+                        )}
+                      <span
+                        className="menu-item"
+                        onClick={() => onDelete(request.id)}
+                        style={{ color: "red" }}
+                      >
+                        Delete Request
+                      </span>
                     </div>
                   )}
                 </div>
               </div>
             </div>
 
-            <p><strong>Email:</strong> <span className="value">{request.email}</span></p>
-            <p><strong>Preferred Contact:</strong> <span className="value">{request.preferredContact}</span></p>
-            {request.otherContacts && (
-              <p><strong>Other Contacts:</strong> <span className="value">{request.otherContacts}</span></p>
-            )}
-            <p><strong>Service Type:</strong> <span className="value">{request.serviceType}</span></p>
-            <p><strong>Plan:</strong> <span className="value">{request.plan}</span></p>
-            <p><strong>Billing Cycle:</strong> <span className="value">{request.billingCycle || 'Standard'}</span></p>
             <p>
-              <strong>Billing Start:</strong>{' '}
+              <strong>Email:</strong>{" "}
+              <span className="value">{request.email}</span>
+            </p>
+            <p>
+              <strong>Preferred Contact:</strong>{" "}
+              <span className="value">{request.preferredContact}</span>
+            </p>
+            {request.otherContacts && (
+              <p>
+                <strong>Other Contacts:</strong>{" "}
+                <span className="value">{request.otherContacts}</span>
+              </p>
+            )}
+            <p>
+              <strong>Plan:</strong>{" "}
+              <span className="value">{request.plan}</span>
+            </p>
+            <p>
+              <strong>Billing Cycle:</strong>{" "}
               <span className="value">
-                {includesWebsiteBuilding
-                  ? formatDateTime(request.billingStartDate) || formatDateTime(addOneMonth(getRequestBaseDate(request)).toISOString())
-                  : 'Immediate'}
+                {request.billingCycle || "Standard"}
               </span>
             </p>
-            <p><strong>Billing End:</strong> <span className="value">{formatDateTime(request.billingEndDate) || '—'}</span></p>
+            <p>
+              <strong>Billing Start:</strong>{" "}
+              <span className="value">
+                {includesWebsiteBuilding
+                  ? formatDateTime(request.billingStartDate) ||
+                    formatDateTime(
+                      addOneMonth(getRequestBaseDate(request)).toISOString(),
+                    )
+                  : "Immediate"}
+              </span>
+            </p>
+            <p>
+              <strong>Billing End:</strong>{" "}
+              <span className="value">
+                {formatDateTime(request.billingEndDate) || "—"}
+              </span>
+            </p>
+
+            <div
+              style={{
+                margin: "14px 0",
+                padding: "12px",
+                borderRadius: "10px",
+                border: "1px solid rgba(96, 165, 250, 0.25)",
+                background: "rgba(37, 99, 235, 0.08)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  marginBottom: 10,
+                }}
+              >
+                <h4 style={{ margin: 0, color: "#bfdbfe" }}>Invoices</h4>
+                <button
+                  onClick={() => generateInvoiceForRequest(request)}
+                  style={{ padding: "8px 14px" }}
+                  disabled={!!invoiceStats.currentCycleUnpaidInvoice}
+                  title={
+                    invoiceStats.currentCycleUnpaidInvoice
+                      ? "An unpaid invoice already exists for this billing cycle."
+                      : undefined
+                  }
+                >
+                  Generate Invoice
+                </button>
+              </div>
+
+              {invoiceStats.currentCycleUnpaidInvoice && (
+                <div
+                  style={{
+                    marginBottom: 10,
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    background: "rgba(239, 68, 68, 0.12)",
+                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                    color: "#fecaca",
+                    fontWeight: 600,
+                  }}
+                >
+                  Unpaid invoice exists for this billing cycle:{" "}
+                  {invoiceStats.currentCycleUnpaidInvoice.invoiceId ||
+                    "Pending invoice"}
+                  .
+                </div>
+              )}
+
+              {requestInvoices.length === 0 ? (
+                <p style={{ margin: 0, color: "#cbd5e1" }}>
+                  No invoices yet for this request.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {requestInvoices.map((invoice) => {
+                    const invoicePaid =
+                      String(invoice.status || "unpaid").toLowerCase() ===
+                      "paid";
+                    return (
+                      <div
+                        key={invoice.id}
+                        style={{
+                          position: "relative",
+                          padding: 12,
+                          borderRadius: 8,
+                          background: "rgba(15, 23, 42, 0.65)",
+                          border: `1px solid ${invoicePaid ? "rgba(34,197,94,0.45)" : "rgba(249,115,22,0.45)"}`,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{ position: "absolute", top: 10, right: 10 }}
+                        >
+                          <span
+                            className="badge"
+                            style={{
+                              background: invoicePaid
+                                ? "rgba(34, 197, 94, 0.18)"
+                                : "rgba(249, 115, 22, 0.18)",
+                              color: invoicePaid ? "#bbf7d0" : "#fed7aa",
+                              border: `1px solid ${invoicePaid ? "#22c55e" : "#f97316"}`,
+                              fontWeight: 800,
+                              letterSpacing: "0.04em",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            <span aria-hidden="true">
+                              {invoicePaid ? "✓" : "!"}
+                            </span>
+                            {invoicePaid ? "PAID" : "UNPAID"}
+                          </span>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            flexWrap: "wrap",
+                            marginBottom: 8,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, color: "#fff" }}>
+                              {invoice.invoiceId}
+                            </div>
+                            <div
+                              style={{ color: "#cbd5e1", fontSize: "0.92rem" }}
+                            >
+                              {invoice.planName || "—"}
+                            </div>
+                            <div
+                              style={{ color: "#cbd5e1", fontSize: "0.92rem" }}
+                            >
+                              {formatCurrency(invoice.amount)}
+                            </div>
+                            <div
+                              style={{ color: "#cbd5e1", fontSize: "0.92rem" }}
+                            >
+                              Billing:{" "}
+                              {formatDateOnly(invoice.billingStartDate) || "—"}{" "}
+                              to {formatDateOnly(invoice.billingEndDate) || "—"}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          style={{ display: "flex", flexWrap: "wrap", gap: 8 }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => openInvoiceModal(invoice, "edit")}
+                          >
+                            Edit
+                          </button>
+                          {!invoicePaid ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openInvoiceModal(invoice, "markPaid")
+                              }
+                            >
+                              Mark as Paid
+                            </button>
+                          ) : (
+                            <span
+                              style={{
+                                color: "#22c55e",
+                                fontWeight: 700,
+                                alignSelf: "center",
+                              }}
+                            >
+                              Already Paid
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleViewRequest(invoice.requestId)}
+                          >
+                            View Request
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadInvoice(invoice)}
+                          >
+                            Download Invoice
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              copyToClipboard(
+                                invoice.invoiceId || "",
+                                "Invoice ID copied",
+                              )
+                            }
+                          >
+                            Copy Invoice ID
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyInvoiceMessage(invoice)}
+                          >
+                            Copy Client Message
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCopyShortInvoiceMessage(invoice)
+                            }
+                          >
+                            Copy Short Message
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteInvoice(invoice)}
+                            style={{
+                              backgroundColor: "#7f1d1d",
+                              border: "1px solid #ef4444",
+                              color: "#fff",
+                            }}
+                          >
+                            Delete Invoice
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {showWebsiteBuildingOption && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px', color: '#f5d0fe', fontWeight: 'bold' }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  margin: "8px 0 12px",
+                  color: "#f5d0fe",
+                  fontWeight: "bold",
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={includesWebsiteBuilding}
                   disabled={websiteBuildingSaving[request.id]}
-                  onChange={(e) => handleWebsiteBuildingToggle(request, e.target.checked)}
+                  onChange={(e) =>
+                    handleWebsiteBuildingToggle(request, e.target.checked)
+                  }
                   style={{ width: 16, height: 16 }}
                 />
                 Includes Website Building
@@ -661,110 +1975,186 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
             )}
 
             {showWebsiteBuildingOption && includesWebsiteBuilding && (
-              <div style={{
-                padding: '10px 12px',
-                borderRadius: '8px',
-                background: 'rgba(16, 185, 129, 0.12)',
-                border: '1px solid rgba(16, 185, 129, 0.25)',
-                marginBottom: '10px',
-                color: '#d1fae5',
-                fontWeight: 600,
-              }}>
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  background: "rgba(16, 185, 129, 0.12)",
+                  border: "1px solid rgba(16, 185, 129, 0.25)",
+                  marginBottom: "10px",
+                  color: "#d1fae5",
+                  fontWeight: 600,
+                }}
+              >
                 First Month Free (Website Build Included)
               </div>
             )}
-            
-            {request.plan && TIER_LIMITS[request.plan] && (() => {
-              const credits = requestCredits[request.id] || { largeCommits: 0, smallChanges: 0 };
-              const limits = TIER_LIMITS[request.plan];
-              return (
-                <div style={{ 
-                  padding: '10px', 
-                  backgroundColor: 'rgba(251, 191, 36, 0.1)', 
-                  borderRadius: '4px',
-                  marginBottom: '8px'
-                }}>
-                  <p style={{ margin: '4px 0' }}>
-                    <strong>Credits Used:</strong>{' '}
-                    <span className="value">
-                      Large: {credits.largeCommits}/{limits.largeCommits} | 
-                      Small: {credits.smallChanges}/{limits.smallChanges === null ? '∞' : limits.smallChanges}
-                    </span>
-                  </p>
-                </div>
-              );
-            })()}
 
-            <p><strong>Project Reference:</strong> <span className="value">{request.projectReference}</span></p>
-            <p><strong>Requirements:</strong> <span className="value">{request.requirements}</span></p>
+            {request.plan &&
+              TIER_LIMITS[request.plan] &&
+              (() => {
+                const credits = requestCredits[request.id] || {
+                  largeCommits: 0,
+                  smallChanges: 0,
+                };
+                const limits = TIER_LIMITS[request.plan];
+                return (
+                  <div
+                    style={{
+                      padding: "10px",
+                      backgroundColor: "rgba(251, 191, 36, 0.1)",
+                      borderRadius: "4px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <p style={{ margin: "4px 0" }}>
+                      <strong>Credits Used:</strong>{" "}
+                      <span className="value">
+                        Large: {credits.largeCommits}/{limits.largeCommits} |
+                        Small: {credits.smallChanges}/
+                        {limits.smallChanges === null
+                          ? "∞"
+                          : limits.smallChanges}
+                      </span>
+                    </p>
+                  </div>
+                );
+              })()}
 
-            <div style={{ margin: '12px 0 6px' }}>
-              <label style={{ display: 'block', marginBottom: 6, fontWeight: 'bold', color: '#f5d0fe' }}>
-                Admin Notes <span style={{ fontWeight: 400, color: '#c4b5fd' }}>(private)</span>
+            <p>
+              <strong>Project Reference:</strong>{" "}
+              <span className="value">{request.projectReference}</span>
+            </p>
+            <p>
+              <strong>Requirements:</strong>{" "}
+              <span className="value">{request.requirements}</span>
+            </p>
+
+            <div style={{ margin: "12px 0 6px" }}>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 6,
+                  fontWeight: "bold",
+                  color: "#f5d0fe",
+                }}
+              >
+                Admin Notes{" "}
+                <span style={{ fontWeight: 400, color: "#c4b5fd" }}>
+                  (private)
+                </span>
               </label>
               <textarea
-                value={notesDrafts[request.id] ?? String(request.notes || '')}
+                value={notesDrafts[request.id] ?? String(request.notes || "")}
                 onChange={(e) => handleNotesChange(request.id, e.target.value)}
                 placeholder="Add internal notes for this request. Visible only in the admin dashboard."
                 rows={5}
                 style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  resize: 'vertical',
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(167, 139, 250, 0.35)',
-                  background: 'rgba(17, 24, 39, 0.85)',
-                  color: '#fff',
-                  font: 'inherit',
+                  width: "100%",
+                  boxSizing: "border-box",
+                  resize: "vertical",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(167, 139, 250, 0.35)",
+                  background: "rgba(17, 24, 39, 0.85)",
+                  color: "#fff",
+                  font: "inherit",
                   lineHeight: 1.5,
-                  marginBottom: '8px',
+                  marginBottom: "8px",
                 }}
               />
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', justifyContent: 'space-between' }}>
-                <div style={{ color: '#c4b5fd', fontSize: '0.9rem' }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: "10px",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div style={{ color: "#c4b5fd", fontSize: "0.9rem" }}>
                   {request.notesUpdatedAt
                     ? `Last updated ${new Date(request.notesUpdatedAt).toLocaleString()}`
-                    : 'No saved notes yet.'}
+                    : "No saved notes yet."}
                 </div>
                 <button
                   onClick={() => handleSaveNotes(request)}
                   disabled={
                     notesSaving[request.id] ||
-                    String(notesDrafts[request.id] ?? request.notes ?? '') === String(request.notes ?? '')
+                    String(notesDrafts[request.id] ?? request.notes ?? "") ===
+                      String(request.notes ?? "")
                   }
                   style={{
-                    padding: '8px 14px',
-                    backgroundColor: notesSaving[request.id] ? '#4b5563' : '#6b21a8',
-                    border: 'none',
-                    borderRadius: '6px',
-                    color: '#fff',
-                    cursor: notesSaving[request.id] ? 'not-allowed' : 'pointer',
+                    padding: "8px 14px",
+                    backgroundColor: notesSaving[request.id]
+                      ? "#4b5563"
+                      : "#6b21a8",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#fff",
+                    cursor: notesSaving[request.id] ? "not-allowed" : "pointer",
                     opacity: notesSaving[request.id] ? 0.7 : 1,
                   }}
                 >
-                  {notesSaving[request.id] ? 'Saving...' : 'Save Notes'}
+                  {notesSaving[request.id] ? "Saving..." : "Save Notes"}
                 </button>
               </div>
             </div>
-            <p><strong>Status:</strong> <span className="value" style={{color: isOverdue ? '#ff4d4d' : '#a78bfa', fontWeight: 'bold'}}>{request.requesterStatus || 'Lead'}</span></p>
-            
+            <p>
+              <strong>Status:</strong>{" "}
+              <span
+                className="value"
+                style={{
+                  color: isOverdue ? "#ff4d4d" : "#a78bfa",
+                  fontWeight: "bold",
+                }}
+              >
+                {request.requesterStatus || "Lead"}
+              </span>
+            </p>
+
             {request.renewalDate && (
-              <p><strong>Next Renewal:</strong> <span className="value" style={{color: isOverdue ? '#ff4d4d' : '#10b981'}}>{new Date(request.renewalDate).toLocaleDateString()}</span></p>
+              <p>
+                <strong>Next Renewal:</strong>{" "}
+                <span
+                  className="value"
+                  style={{ color: isOverdue ? "#ff4d4d" : "#10b981" }}
+                >
+                  {new Date(request.renewalDate).toLocaleDateString()}
+                </span>
+              </p>
             )}
 
-            <p><strong>Date:</strong> <span className="value">{request.date}</span></p>
-            <p><strong>Source:</strong> <span className="value">{request.source}</span></p>
             <p>
-              <strong>Accepted Terms:</strong>{' '}
-              <span className="value">{request.acceptedTerms ? 'Yes' : 'No'}</span>
+              <strong>Date:</strong>{" "}
+              <span className="value">{request.date}</span>
             </p>
             <p>
-              <strong>Created At:</strong>{' '}
-              <span className="value">{request.createdAt ? new Date(request.createdAt).toLocaleString() : '—'}</span>
+              <strong>Source:</strong>{" "}
+              <span className="value">{request.source}</span>
+            </p>
+            <p>
+              <strong>Accepted Terms:</strong>{" "}
+              <span className="value">
+                {request.acceptedTerms ? "Yes" : "No"}
+              </span>
+            </p>
+            <p>
+              <strong>Created At:</strong>{" "}
+              <span className="value">
+                {request.createdAt
+                  ? new Date(request.createdAt).toLocaleString()
+                  : "—"}
+              </span>
             </p>
 
-            <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #6b21a8' }} />
+            <hr
+              style={{
+                margin: "16px 0",
+                border: "none",
+                borderTop: "1px solid #6b21a8",
+              }}
+            />
           </div>
         );
       })}
@@ -774,25 +2164,232 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         <div className="modal-overlay" onClick={cancelUpdatePlan}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Update Plan</h3>
-            <p style={{ marginBottom: '16px', color: '#a78bfa' }}>Update the plan for <strong>{updatePlanModal.name}</strong></p>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Select New Plan:</label>
-            <div style={{ marginBottom: '20px' }}>
+            <p style={{ marginBottom: "16px", color: "#a78bfa" }}>
+              Update the plan for <strong>{updatePlanModal.name}</strong>
+            </p>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                fontWeight: "bold",
+              }}
+            >
+              Select New Plan:
+            </label>
+            <div style={{ marginBottom: "20px" }}>
               <CustomDropdown
                 options={[
-                  { value: '', label: 'Select a Plan' },
-                  { value: 'Starter Plan', label: 'Starter Plan' },
-                  { value: 'Premium Plan', label: 'Premium Plan' },
-                  { value: 'Elite Plan', label: 'Elite Plan' },
-                  { value: 'To be discussed', label: 'To be discussed' },
+                  { value: "", label: "Select a Plan" },
+                  { value: "Starter Plan", label: "Starter Plan" },
+                  { value: "Premium Plan", label: "Premium Plan" },
+                  { value: "Elite Plan", label: "Elite Plan" },
+                  { value: "To be discussed", label: "To be discussed" },
                 ]}
                 selected={newPlan}
                 onChange={(value) => setNewPlan(value)}
                 placeholder="Select a Plan"
               />
             </div>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button onClick={cancelUpdatePlan} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={confirmUpdatePlan} disabled={!newPlan} style={{ padding: '10px 20px', backgroundColor: newPlan ? '#6b21a8' : '#333', border: 'none', borderRadius: '6px', color: '#fff', cursor: newPlan ? 'pointer' : 'not-allowed', opacity: newPlan ? 1 : 0.5 }}>Update</button>
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={cancelUpdatePlan}
+                style={{
+                  padding: "10px 20px",
+                  backgroundColor: "transparent",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmUpdatePlan}
+                disabled={!newPlan}
+                style={{
+                  padding: "10px 20px",
+                  backgroundColor: newPlan ? "#6b21a8" : "#333",
+                  border: "none",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  cursor: newPlan ? "pointer" : "not-allowed",
+                  opacity: newPlan ? 1 : 0.5,
+                }}
+              >
+                Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {invoiceModal.open && invoiceModal.draft && (
+        <div className="modal-overlay" onClick={closeInvoiceModal}>
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxHeight: "86vh", overflowY: "auto" }}
+          >
+            <h3>
+              {invoiceModal.mode === "generate"
+                ? "Generate Invoice"
+                : invoiceModal.mode === "markPaid"
+                  ? "Mark Invoice as Paid"
+                  : "Edit Invoice"}
+            </h3>
+            <div style={{ display: "grid", gap: 12 }}>
+              {invoiceModal.mode === "generate" && (
+                <p style={{ margin: 0, color: "#cbd5e1" }}>
+                  Review the prefilled amount and dates before saving the
+                  invoice.
+                </p>
+              )}
+              <label>
+                Client Name
+                <input
+                  value={invoiceModal.draft.clientName}
+                  onChange={(e) =>
+                    updateInvoiceDraft("clientName", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Client Email
+                <input
+                  value={invoiceModal.draft.clientEmail}
+                  onChange={(e) =>
+                    updateInvoiceDraft("clientEmail", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Invoice ID
+                <input
+                  value={invoiceModal.invoiceId || "Will be generated on save"}
+                  disabled
+                />
+              </label>
+              <label>
+                Plan Name
+                <input
+                  value={invoiceModal.draft.planName}
+                  onChange={(e) =>
+                    updateInvoiceDraft("planName", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Amount
+                <input
+                  type="number"
+                  min="0"
+                  value={invoiceModal.draft.amount}
+                  onChange={(e) => updateInvoiceDraft("amount", e.target.value)}
+                />
+              </label>
+              <label>
+                Billing Start Date
+                <input
+                  type="date"
+                  value={invoiceModal.draft.billingStartDate}
+                  onChange={(e) =>
+                    updateInvoiceDraft("billingStartDate", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Billing End Date
+                <input
+                  type="date"
+                  value={invoiceModal.draft.billingEndDate}
+                  onChange={(e) =>
+                    updateInvoiceDraft("billingEndDate", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Status
+                <select
+                  value={invoiceModal.draft.status}
+                  onChange={(e) => updateInvoiceDraft("status", e.target.value)}
+                >
+                  <option value="unpaid">Unpaid</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </label>
+              <label>
+                Payment Method
+                <select
+                  value={invoiceModal.draft.paymentMethod}
+                  onChange={(e) =>
+                    updateInvoiceDraft("paymentMethod", e.target.value)
+                  }
+                >
+                  <option value="">Select payment method</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Cash">Cash</option>
+                </select>
+              </label>
+              <label>
+                Transaction Reference
+                <input
+                  value={invoiceModal.draft.transactionReference}
+                  onChange={(e) =>
+                    updateInvoiceDraft("transactionReference", e.target.value)
+                  }
+                  placeholder="Optional"
+                />
+              </label>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+                marginTop: "20px",
+              }}
+            >
+              <button
+                onClick={closeInvoiceModal}
+                style={{
+                  padding: "10px 20px",
+                  backgroundColor: "transparent",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveInvoiceModal}
+                disabled={invoiceModal.saving}
+                style={{
+                  padding: "10px 20px",
+                  backgroundColor: "#2563eb",
+                  border: "none",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  cursor: invoiceModal.saving ? "not-allowed" : "pointer",
+                  opacity: invoiceModal.saving ? 0.7 : 1,
+                }}
+              >
+                {invoiceModal.saving
+                  ? "Saving..."
+                  : invoiceModal.mode === "markPaid"
+                    ? "Save Payment"
+                    : "Save Invoice"}
+              </button>
             </div>
           </div>
         </div>
@@ -803,73 +2400,104 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
         <div className="modal-overlay" onClick={closeCreditModal}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Manage Credits</h3>
-            <p style={{ marginBottom: '16px', color: '#a78bfa' }}>
-              Managing credits for <strong>{creditModal.name}</strong> ({creditModal.plan})
+            <p style={{ marginBottom: "16px", color: "#a78bfa" }}>
+              Managing credits for <strong>{creditModal.name}</strong> (
+              {creditModal.plan})
             </p>
 
             {(() => {
               const plan = creditModal.plan;
               const limits = TIER_LIMITS[plan];
-              const credits = requestCredits[creditModal.id] || { largeCommits: 0, smallChanges: 0 };
+              const credits = requestCredits[creditModal.id] || {
+                largeCommits: 0,
+                smallChanges: 0,
+              };
 
               if (!limits) {
-                return <p style={{ color: '#ef4444' }}>Plan not found. Please update plan first.</p>;
+                return (
+                  <p style={{ color: "#ef4444" }}>
+                    Plan not found. Please update plan first.
+                  </p>
+                );
               }
 
               const largeCommitLimit = limits.largeCommits;
               const smallChangeLimit = limits.smallChanges;
-              const largeCommitRemaining = largeCommitLimit - credits.largeCommits;
-              const smallChangeRemaining = smallChangeLimit === null ? Infinity : smallChangeLimit - credits.smallChanges;
+              const largeCommitRemaining =
+                largeCommitLimit - credits.largeCommits;
+              const smallChangeRemaining =
+                smallChangeLimit === null
+                  ? Infinity
+                  : smallChangeLimit - credits.smallChanges;
               const canAddLargeCommit = largeCommitRemaining > 0;
-              const canAddSmallChange = smallChangeLimit === null || smallChangeRemaining > 0;
+              const canAddSmallChange =
+                smallChangeLimit === null || smallChangeRemaining > 0;
 
               return (
                 <div>
-                  <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#fbbf24' }}>Large Commits</h4>
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center',
-                      padding: '12px',
-                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                      borderRadius: '6px',
-                      marginBottom: '12px'
-                    }}>
+                  <div style={{ marginBottom: "20px" }}>
+                    <h4 style={{ marginBottom: "12px", color: "#fbbf24" }}>
+                      Large Commits
+                    </h4>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "12px",
+                        backgroundColor: "rgba(59, 130, 246, 0.1)",
+                        borderRadius: "6px",
+                        marginBottom: "12px",
+                      }}
+                    >
                       <span>
-                        <strong>{credits.largeCommits}/{largeCommitLimit}</strong>
-                        {largeCommitRemaining <= 0 && <span style={{ color: '#ef4444', marginLeft: '8px' }}>(Limit reached)</span>}
+                        <strong>
+                          {credits.largeCommits}/{largeCommitLimit}
+                        </strong>
+                        {largeCommitRemaining <= 0 && (
+                          <span style={{ color: "#ef4444", marginLeft: "8px" }}>
+                            (Limit reached)
+                          </span>
+                        )}
                       </span>
-                      <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
                         <button
-                          onClick={() => removeCredit('largeCommit')}
+                          onClick={() => removeCredit("largeCommit")}
                           disabled={credits.largeCommits <= 0}
                           aria-label="Remove Large Commit credit"
                           style={{
-                            padding: '6px 10px',
-                            backgroundColor: credits.largeCommits > 0 ? '#ef4444' : '#666',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            cursor: credits.largeCommits > 0 ? 'pointer' : 'not-allowed',
-                            opacity: credits.largeCommits > 0 ? 1 : 0.5
+                            padding: "6px 10px",
+                            backgroundColor:
+                              credits.largeCommits > 0 ? "#ef4444" : "#666",
+                            border: "none",
+                            borderRadius: "4px",
+                            color: "#fff",
+                            cursor:
+                              credits.largeCommits > 0
+                                ? "pointer"
+                                : "not-allowed",
+                            opacity: credits.largeCommits > 0 ? 1 : 0.5,
                           }}
                         >
                           −
                         </button>
 
                         <button
-                          onClick={() => addCredit('largeCommit')}
+                          onClick={() => addCredit("largeCommit")}
                           disabled={!canAddLargeCommit}
                           aria-label="Add Large Commit credit"
                           style={{
-                            padding: '8px 16px',
-                            backgroundColor: canAddLargeCommit ? '#3b82f6' : '#666',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            cursor: canAddLargeCommit ? 'pointer' : 'not-allowed',
-                            opacity: canAddLargeCommit ? 1 : 0.5
+                            padding: "8px 16px",
+                            backgroundColor: canAddLargeCommit
+                              ? "#3b82f6"
+                              : "#666",
+                            border: "none",
+                            borderRadius: "4px",
+                            color: "#fff",
+                            cursor: canAddLargeCommit
+                              ? "pointer"
+                              : "not-allowed",
+                            opacity: canAddLargeCommit ? 1 : 0.5,
                           }}
                         >
                           +
@@ -878,53 +2506,73 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
                     </div>
                   </div>
 
-                  <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#fbbf24' }}>Small Changes</h4>
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center',
-                      padding: '12px',
-                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                      borderRadius: '6px',
-                      marginBottom: '12px'
-                    }}>
+                  <div style={{ marginBottom: "20px" }}>
+                    <h4 style={{ marginBottom: "12px", color: "#fbbf24" }}>
+                      Small Changes
+                    </h4>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "12px",
+                        backgroundColor: "rgba(59, 130, 246, 0.1)",
+                        borderRadius: "6px",
+                        marginBottom: "12px",
+                      }}
+                    >
                       <span>
                         <strong>
-                          {credits.smallChanges}/{smallChangeLimit === null ? '∞' : smallChangeLimit}
+                          {credits.smallChanges}/
+                          {smallChangeLimit === null ? "∞" : smallChangeLimit}
                         </strong>
-                        {smallChangeLimit !== null && smallChangeRemaining <= 0 && <span style={{ color: '#ef4444', marginLeft: '8px' }}>(Limit reached)</span>}
+                        {smallChangeLimit !== null &&
+                          smallChangeRemaining <= 0 && (
+                            <span
+                              style={{ color: "#ef4444", marginLeft: "8px" }}
+                            >
+                              (Limit reached)
+                            </span>
+                          )}
                       </span>
-                      <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
                         <button
-                          onClick={() => removeCredit('smallChange')}
+                          onClick={() => removeCredit("smallChange")}
                           disabled={credits.smallChanges <= 0}
                           aria-label="Remove Small Change credit"
                           style={{
-                            padding: '6px 10px',
-                            backgroundColor: credits.smallChanges > 0 ? '#ef4444' : '#666',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            cursor: credits.smallChanges > 0 ? 'pointer' : 'not-allowed',
-                            opacity: credits.smallChanges > 0 ? 1 : 0.5
+                            padding: "6px 10px",
+                            backgroundColor:
+                              credits.smallChanges > 0 ? "#ef4444" : "#666",
+                            border: "none",
+                            borderRadius: "4px",
+                            color: "#fff",
+                            cursor:
+                              credits.smallChanges > 0
+                                ? "pointer"
+                                : "not-allowed",
+                            opacity: credits.smallChanges > 0 ? 1 : 0.5,
                           }}
                         >
                           −
                         </button>
 
                         <button
-                          onClick={() => addCredit('smallChange')}
+                          onClick={() => addCredit("smallChange")}
                           disabled={!canAddSmallChange}
                           aria-label="Add Small Change credit"
                           style={{
-                            padding: '8px 16px',
-                            backgroundColor: canAddSmallChange ? '#3b82f6' : '#666',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            cursor: canAddSmallChange ? 'pointer' : 'not-allowed',
-                            opacity: canAddSmallChange ? 1 : 0.5
+                            padding: "8px 16px",
+                            backgroundColor: canAddSmallChange
+                              ? "#3b82f6"
+                              : "#666",
+                            border: "none",
+                            borderRadius: "4px",
+                            color: "#fff",
+                            cursor: canAddSmallChange
+                              ? "pointer"
+                              : "not-allowed",
+                            opacity: canAddSmallChange ? 1 : 0.5,
                           }}
                         >
                           +
@@ -933,36 +2581,48 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
                     </div>
                   </div>
 
-                  <div style={{ 
-                    padding: '12px',
-                    backgroundColor: 'rgba(168, 85, 247, 0.1)',
-                    borderRadius: '6px',
-                    marginBottom: '20px'
-                  }}>
-                    <p style={{ margin: '4px 0', fontSize: '0.9rem' }}>
+                  <div
+                    style={{
+                      padding: "12px",
+                      backgroundColor: "rgba(168, 85, 247, 0.1)",
+                      borderRadius: "6px",
+                      marginBottom: "20px",
+                    }}
+                  >
+                    <p style={{ margin: "4px 0", fontSize: "0.9rem" }}>
                       <strong>Plan Summary:</strong>
                     </p>
-                    <p style={{ margin: '4px 0', fontSize: '0.9rem' }}>
+                    <p style={{ margin: "4px 0", fontSize: "0.9rem" }}>
                       • Large Commits: {largeCommitLimit}/month
                     </p>
-                    <p style={{ margin: '4px 0', fontSize: '0.9rem' }}>
-                      • Small Changes: {smallChangeLimit === null ? 'Unlimited' : smallChangeLimit}/month
+                    <p style={{ margin: "4px 0", fontSize: "0.9rem" }}>
+                      • Small Changes:{" "}
+                      {smallChangeLimit === null
+                        ? "Unlimited"
+                        : smallChangeLimit}
+                      /month
                     </p>
                   </div>
                 </div>
               );
             })()}
 
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button 
-                onClick={closeCreditModal} 
-                style={{ 
-                  padding: '10px 20px', 
-                  backgroundColor: 'transparent', 
-                  border: '1px solid rgba(255,255,255,0.2)', 
-                  borderRadius: '6px', 
-                  color: '#fff', 
-                  cursor: 'pointer' 
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={closeCreditModal}
+                style={{
+                  padding: "10px 20px",
+                  backgroundColor: "transparent",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  cursor: "pointer",
                 }}
               >
                 Close
@@ -975,7 +2635,7 @@ const ServiceRequestsTab = ({ data = [], onDelete, onUpdatePlan, onUpdateStatus,
       {/* Global Confirm / Info modal */}
       <ConfirmModal
         open={!!confirmModal.open}
-        title={confirmModal.title || ''}
+        title={confirmModal.title || ""}
         onConfirm={confirmModal.onConfirm}
         onCancel={closeConfirm}
         confirmLabel={confirmModal.confirmLabel}

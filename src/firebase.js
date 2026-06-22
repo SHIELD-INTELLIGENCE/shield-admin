@@ -14,8 +14,6 @@ const auth = getAuth(app);
 
 const feedsCollection = collection(db, "feeds");
 const usersCollection = collection(db, "users");
-const wantedsCollection = collection(db, "wanteds");
-const employeesCollection = collection(db, "employees");
 const invoicesCollection = collection(db, "invoices");
 
-export { auth, db, feedsCollection, usersCollection, wantedsCollection, employeesCollection, invoicesCollection };
+export { auth, db, feedsCollection, usersCollection, invoicesCollection };

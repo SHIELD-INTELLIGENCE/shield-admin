@@ -2,8 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import FeedsTab from "../Tabs/FeedsTab.jsx";
-import EmployeesTab from "../Tabs/EmployeesTab.jsx";
-import WantedsTab from "../Tabs/WantedTab.jsx";
 import UsersTab from "../Tabs//UsersTab.jsx";
 import JoinApplicationsTab from "../Tabs/JoinApplicationsTab.jsx";
 import ServiceRequestsTab from "../Tabs/ServiceRequestsTab.jsx";
@@ -665,20 +663,7 @@ export default function App() {
         >
           Feeds
         </button>
-        <button
-          className={`tab-button ${activeTab === "wanteds" ? "active" : ""}`}
-          aria-pressed={activeTab === "wanteds"}
-          onClick={() => toggleTab("wanteds")}
-        >
-          Wanteds
-        </button>
-        <button
-          className={`tab-button ${activeTab === "employees" ? "active" : ""}`}
-          aria-pressed={activeTab === "employees"}
-          onClick={() => toggleTab("employees")}
-        >
-          Employees
-        </button>
+
         <button
           className={`tab-button ${activeTab === "users" ? "active" : ""}`}
           aria-pressed={activeTab === "users"}
@@ -708,8 +693,7 @@ export default function App() {
 
       <div style={{ flex: 1 }}>
         {activeTab === "feeds" && <FeedsTab />}
-        {activeTab === "wanteds" && <WantedsTab />}
-        {activeTab === "employees" && <EmployeesTab />}
+
         {activeTab === "users" && <UsersTab />}
         {activeTab === "joinApplications" && (
           <JoinApplicationsTab data={joinApplicationsData} onDelete={handleDeleteJoinApplication} />

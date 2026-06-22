@@ -5,7 +5,10 @@ const { Resend } = require("resend");
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 const app = initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore(app);
-const resend = new Resend(process.env.RESEND_API_KEY);
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+console.log("Resend key prefix:", RESEND_API_KEY ? RESEND_API_KEY.substring(0, 6) + "..." : "MISSING");
+const resend = new Resend(RESEND_API_KEY);
 
 const FROM_EMAIL = process.env.SENDER_EMAIL || "noreply@shield.com";
 
@@ -162,19 +165,26 @@ async function main() {
     );
 
     try {
-      await resend.emails.send({
+      const result = await resend.emails.send({
         from: FROM_EMAIL,
         to: data.email,
         subject,
         html,
       });
 
+      console.log(`[${alertType}] Resend response:`, JSON.stringify(result));
+
+      if (!result || result.error) {
+        console.error(`[${alertType}] Resend returned error:`, result?.error);
+        continue;
+      }
+
       await db.collection("serviceRequests").doc(doc.id).update({
         lastAlertType: alertType,
         lastAlertSentAt: new Date().toISOString(),
       });
 
-      console.log(`[${alertType}] Email sent to ${data.email} (${data.name}) — ${data.plan}`);
+      console.log(`[${alertType}] Email sent to ${data.email} (${data.name}) — ${data.plan}, id=${result.id || "unknown"}`);
       sent++;
     } catch (err) {
       console.error(`Failed to send email to ${data.email}:`, err);

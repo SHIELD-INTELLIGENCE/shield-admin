@@ -2779,7 +2779,6 @@ const ServiceRequestsTab = ({
               >
                 <option value="Monthly">Monthly</option>
                 <option value="Quarterly">Quarterly</option>
-                <option value="Yearly">Yearly</option>
               </select>
 
               {customForm.plan === "Custom Plan" && (

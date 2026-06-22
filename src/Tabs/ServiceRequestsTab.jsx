@@ -411,7 +411,6 @@ const ServiceRequestsTab = ({
     saving: false,
   });
   const [confirmModal, setConfirmModal] = useState({ open: false });
-  const [localNotice, setLocalNotice] = useState("");
   const [customModal, setCustomModal] = useState({ open: false, saving: false });
   const [customForm, setCustomForm] = useState({
     name: "",
@@ -1460,37 +1459,6 @@ const ServiceRequestsTab = ({
     <div className="service-requests-tab">
       <h2>Service Requests</h2>
 
-      {localNotice && (
-        <div
-          style={{
-            padding: "10px 14px",
-            marginBottom: 10,
-            borderRadius: 6,
-            background: "rgba(34, 197, 94, 0.15)",
-            border: "1px solid rgba(34, 197, 94, 0.35)",
-            color: "#bbf7d0",
-            fontWeight: 500,
-            fontSize: 14,
-          }}
-        >
-          {localNotice}
-          <button
-            onClick={() => setLocalNotice("")}
-            style={{
-              marginLeft: 12,
-              background: "none",
-              border: "none",
-              color: "#bbf7d0",
-              cursor: "pointer",
-              fontWeight: 700,
-              fontSize: 16,
-            }}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
         <button
           onClick={() => {
@@ -1523,54 +1491,7 @@ const ServiceRequestsTab = ({
         >
           + Create Custom Request
         </button>
-        <button
-          onClick={async () => {
-            try {
-              const now = new Date();
-              const yesterday = new Date(now);
-              yesterday.setDate(yesterday.getDate() - 1);
-              const twoDaysAgo = new Date(now);
-              twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-              await addDoc(collection(db, "serviceRequests"), {
-                name: "Test User",
-                email: "reyanshrajmishra8@gmail.com",
-                preferredContact: "reyanshrajmishra8@gmail.com",
-                plan: "Premium Plan",
-                billingCycle: "Monthly",
-                source: "test",
-                requirements: "Test expired request for email notification testing.",
-                status: "active",
-                requesterStatus: "Active",
-                billingStartDate: twoDaysAgo.toISOString(),
-                billingEndDate: yesterday.toISOString(),
-                liveDate: twoDaysAgo.toISOString(),
-                renewalDate: yesterday.toISOString(),
-                date: twoDaysAgo.toISOString(),
-                createdAt: twoDaysAgo.toISOString(),
-                isPaused: false,
-                acceptedTerms: true,
-                credits: { largeCommits: 0, smallChanges: 0, lastResetMonth: now.toISOString().slice(0, 7) },
-                notes: "",
-                includesWebsiteBuilding: false,
-              });
-              setLocalNotice("Test expired request created! Now re-run the GitHub Action to trigger the email.");
-            } catch (e) {
-              console.error("Failed to create test request:", e);
-            }
-          }}
-          style={{
-            padding: "8px 16px",
-            background: "#dc2626",
-            color: "#fff",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-            fontSize: 14,
-            fontWeight: 600,
-          }}
-        >
-          🧪 Create Test Expired Request
-        </button>
+
       </div>
 
       <div className="tab-controls">

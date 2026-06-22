@@ -424,6 +424,8 @@ const ServiceRequestsTab = ({
     projectReference: "",
     customMonthlyPrice: "",
     buildCost: "",
+    billingStartDate: "",
+    billingEndDate: "",
     acceptedTerms: true,
   });
 
@@ -1463,7 +1465,7 @@ const ServiceRequestsTab = ({
         <button
           onClick={() => {
             setCustomForm({
-              name: "",
+               name: "",
               email: "",
               preferredContact: "",
               otherContacts: "",
@@ -1474,6 +1476,8 @@ const ServiceRequestsTab = ({
               projectReference: "",
               customMonthlyPrice: "",
               buildCost: "",
+              billingStartDate: "",
+              billingEndDate: "",
               acceptedTerms: true,
             });
             setCustomModal({ open: true, saving: false });
@@ -2775,7 +2779,17 @@ const ServiceRequestsTab = ({
               <select
                 className="search-input"
                 value={customForm.billingCycle}
-                onChange={(e) => setCustomForm({ ...customForm, billingCycle: e.target.value })}
+                onChange={(e) => {
+                  const cycle = e.target.value;
+                  let end = customForm.billingStartDate;
+                  if (end) {
+                    const endDate = new Date(end + "T00:00:00");
+                    if (cycle === "Monthly") endDate.setMonth(endDate.getMonth() + 1);
+                    else if (cycle === "Quarterly") endDate.setMonth(endDate.getMonth() + 3);
+                    end = endDate.toISOString().slice(0, 10);
+                  }
+                  setCustomForm({ ...customForm, billingCycle: cycle, billingEndDate: end });
+                }}
                 style={{ width: "100%", color: "#fff", background: "rgba(255,255,255,0.06)" }}
               >
                 <option value="Monthly">Monthly</option>
@@ -2802,6 +2816,34 @@ const ServiceRequestsTab = ({
                   />
                 </>
               )}
+
+              <input
+                className="search-input"
+                placeholder="Billing Start Date"
+                type="date"
+                value={customForm.billingStartDate}
+                onChange={(e) => {
+                  const start = e.target.value;
+                  let end = "";
+                  if (start) {
+                    const startDate = new Date(start + "T00:00:00");
+                    const endDate = new Date(startDate);
+                    if (customForm.billingCycle === "Monthly") endDate.setMonth(endDate.getMonth() + 1);
+                    else if (customForm.billingCycle === "Quarterly") endDate.setMonth(endDate.getMonth() + 3);
+                    end = endDate.toISOString().slice(0, 10);
+                  }
+                  setCustomForm({ ...customForm, billingStartDate: start, billingEndDate: end });
+                }}
+                style={{ width: "100%" }}
+              />
+              <input
+                className="search-input"
+                placeholder="Billing End Date"
+                type="date"
+                value={customForm.billingEndDate}
+                onChange={(e) => setCustomForm({ ...customForm, billingEndDate: e.target.value })}
+                style={{ width: "100%" }}
+              />
 
               <input
                 className="search-input"
@@ -2859,8 +2901,12 @@ const ServiceRequestsTab = ({
                       requesterStatus: "Lead",
                       date: now,
                       createdAt: now,
-                      billingStartDate: "",
-                      billingEndDate: "",
+                      billingStartDate: customForm.billingStartDate
+                        ? new Date(customForm.billingStartDate).toISOString()
+                        : "",
+                      billingEndDate: customForm.billingEndDate
+                        ? new Date(customForm.billingEndDate).toISOString()
+                        : "",
                       liveDate: "",
                       renewalDate: "",
                       isPaused: false,

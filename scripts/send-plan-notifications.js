@@ -122,6 +122,7 @@ async function main() {
     const data = { id: doc.id, ...doc.data() };
 
     if (!data.billingEndDate || !data.email) {
+      console.log(`SKIP: ${data.name || "unknown"} — missing billingEndDate or email`);
       skipped++;
       continue;
     }
@@ -129,7 +130,15 @@ async function main() {
     const days = getDaysRemaining(data.billingEndDate);
     const lastAlert = data.lastAlertType || null;
 
+    console.log(`CHECK: ${data.name} — billingEndDate=${data.billingEndDate}, days=${days}, lastAlert=${lastAlert}`);
+
     let alertType = null;
+
+    if (!Number.isFinite(days)) {
+      console.log(`SKIP: ${data.name} — invalid date (days=${days})`);
+      skipped++;
+      continue;
+    }
 
     if (days <= 0 && lastAlert !== "expired") {
       alertType = "expired";
@@ -140,6 +149,7 @@ async function main() {
     }
 
     if (!alertType) {
+      console.log(`SKIP: ${data.name} — no matching alert type (days=${days}, lastAlert=${lastAlert})`);
       skipped++;
       continue;
     }

@@ -3,7 +3,7 @@ import "../global.css";
 import CustomDropdown from "../components/CustomDropdown.jsx";
 import ConfirmModal from "../components/ConfirmModal.jsx";
 import { jsPDF } from "jspdf";
-import { doc, updateDoc, deleteDoc, runTransaction } from "firebase/firestore";
+import { doc, updateDoc, deleteDoc, runTransaction, addDoc, collection } from "firebase/firestore";
 import { db, invoicesCollection } from "../firebase.js";
 
 // Tier limits configuration
@@ -411,10 +411,27 @@ const ServiceRequestsTab = ({
     saving: false,
   });
   const [confirmModal, setConfirmModal] = useState({ open: false });
+  const [customModal, setCustomModal] = useState({ open: false, saving: false });
+  const [customForm, setCustomForm] = useState({
+    name: "",
+    email: "",
+    preferredContact: "",
+    otherContacts: "",
+    plan: "To be discussed",
+    billingCycle: "Monthly",
+    source: "custom",
+    requirements: "",
+    projectReference: "",
+    customMonthlyPrice: "",
+    buildCost: "",
+    acceptedTerms: true,
+  });
+
   const anyModalOpen =
     !!updatePlanModal ||
     !!creditModal ||
     !!invoiceModal.open ||
+    !!customModal.open ||
     !!confirmModal.open;
 
   const toggleMenu = (index) => {
@@ -1442,6 +1459,40 @@ const ServiceRequestsTab = ({
     <div className="service-requests-tab">
       <h2>Service Requests</h2>
 
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+        <button
+          onClick={() => {
+            setCustomForm({
+              name: "",
+              email: "",
+              preferredContact: "",
+              otherContacts: "",
+              plan: "To be discussed",
+              billingCycle: "Monthly",
+              source: "custom",
+              requirements: "",
+              projectReference: "",
+              customMonthlyPrice: "",
+              buildCost: "",
+              acceptedTerms: true,
+            });
+            setCustomModal({ open: true, saving: false });
+          }}
+          style={{
+            padding: "8px 16px",
+            background: "linear-gradient(135deg, #7c3aed, #a78bfa)",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          + Create Custom Request
+        </button>
+      </div>
+
       <div className="tab-controls">
         <input
           className="search-input"
@@ -1708,6 +1759,36 @@ const ServiceRequestsTab = ({
               <strong>Plan:</strong>{" "}
               <span className="value">{request.plan}</span>
             </p>
+            {request.plan === "Custom Plan" && (
+              <>
+                {request.customMonthlyPrice ? (
+                  <p>
+                    <strong>Monthly Price:</strong>{" "}
+                    <span className="value">{formatCurrency(request.customMonthlyPrice)}</span>
+                  </p>
+                ) : null}
+                {request.buildCost ? (
+                  <p>
+                    <strong>Build Cost:</strong>{" "}
+                    <span className="value">{formatCurrency(request.buildCost)}</span>
+                  </p>
+                ) : null}
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    background: "rgba(239, 68, 68, 0.12)",
+                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                    color: "#fecaca",
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                >
+                  Please pay the fee to activate your custom plan.
+                </div>
+              </>
+            )}
             <p>
               <strong>Billing Cycle:</strong>{" "}
               <span className="value">
@@ -2626,6 +2707,191 @@ const ServiceRequestsTab = ({
                 }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Custom Request Modal */}
+      {customModal.open && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            if (!customModal.saving) setCustomModal({ open: false, saving: false });
+          }}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: 520, width: "100%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 16px", color: "#fbbf24" }}>Create Custom Request</h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <input
+                className="search-input"
+                placeholder="Client Name *"
+                value={customForm.name}
+                onChange={(e) => setCustomForm({ ...customForm, name: e.target.value })}
+                style={{ width: "100%" }}
+              />
+              <input
+                className="search-input"
+                placeholder="Email *"
+                value={customForm.email}
+                onChange={(e) => setCustomForm({ ...customForm, email: e.target.value })}
+                style={{ width: "100%" }}
+              />
+              <input
+                className="search-input"
+                placeholder="Preferred Contact"
+                value={customForm.preferredContact}
+                onChange={(e) => setCustomForm({ ...customForm, preferredContact: e.target.value })}
+                style={{ width: "100%" }}
+              />
+              <input
+                className="search-input"
+                placeholder="Other Contacts"
+                value={customForm.otherContacts}
+                onChange={(e) => setCustomForm({ ...customForm, otherContacts: e.target.value })}
+                style={{ width: "100%" }}
+              />
+
+              <select
+                className="search-input"
+                value={customForm.plan}
+                onChange={(e) => setCustomForm({ ...customForm, plan: e.target.value })}
+                style={{ width: "100%", color: "#fff", background: "rgba(255,255,255,0.06)" }}
+              >
+                <option value="To be discussed">To be discussed</option>
+                <option value="Starter Plan">Starter Plan</option>
+                <option value="Premium Plan">Premium Plan</option>
+                <option value="Elite Plan">Elite Plan</option>
+                <option value="Custom Plan">Custom Plan</option>
+              </select>
+
+              <select
+                className="search-input"
+                value={customForm.billingCycle}
+                onChange={(e) => setCustomForm({ ...customForm, billingCycle: e.target.value })}
+                style={{ width: "100%", color: "#fff", background: "rgba(255,255,255,0.06)" }}
+              >
+                <option value="Monthly">Monthly</option>
+                <option value="Quarterly">Quarterly</option>
+                <option value="Yearly">Yearly</option>
+              </select>
+
+              {customForm.plan === "Custom Plan" && (
+                <>
+                  <input
+                    className="search-input"
+                    placeholder="Custom Monthly Price (INR)"
+                    type="number"
+                    value={customForm.customMonthlyPrice}
+                    onChange={(e) => setCustomForm({ ...customForm, customMonthlyPrice: e.target.value })}
+                    style={{ width: "100%" }}
+                  />
+                  <input
+                    className="search-input"
+                    placeholder="Build Cost (INR)"
+                    type="number"
+                    value={customForm.buildCost}
+                    onChange={(e) => setCustomForm({ ...customForm, buildCost: e.target.value })}
+                    style={{ width: "100%" }}
+                  />
+                </>
+              )}
+
+              <input
+                className="search-input"
+                placeholder="Project Reference"
+                value={customForm.projectReference}
+                onChange={(e) => setCustomForm({ ...customForm, projectReference: e.target.value })}
+                style={{ width: "100%" }}
+              />
+
+              <textarea
+                className="search-input"
+                placeholder="Requirements / Custom notes..."
+                value={customForm.requirements}
+                onChange={(e) => setCustomForm({ ...customForm, requirements: e.target.value })}
+                rows={3}
+                style={{ width: "100%", resize: "vertical" }}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                justifyContent: "flex-end",
+                marginTop: 20,
+              }}
+            >
+              <button
+                onClick={() => setCustomModal({ open: false, saving: false })}
+                disabled={customModal.saving}
+                style={{
+                  padding: "10px 20px",
+                  background: "transparent",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: 6,
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!customForm.name.trim() || !customForm.email.trim()) return;
+                  setCustomModal((p) => ({ ...p, saving: true }));
+                  try {
+                    const now = new Date().toISOString();
+                    await addDoc(collection(db, "serviceRequests"), {
+                      ...customForm,
+                      name: customForm.name.trim(),
+                      email: customForm.email.trim(),
+                      customMonthlyPrice: customForm.customMonthlyPrice ? Number(customForm.customMonthlyPrice) : "",
+                      buildCost: customForm.buildCost ? Number(customForm.buildCost) : "",
+                      status: "active",
+                      requesterStatus: "Lead",
+                      date: now,
+                      createdAt: now,
+                      billingStartDate: "",
+                      billingEndDate: "",
+                      liveDate: "",
+                      renewalDate: "",
+                      isPaused: false,
+                      credits: { largeCommits: 0, smallChanges: 0, lastResetMonth: now.slice(0, 7) },
+                      notes: "",
+                      includesWebsiteBuilding: false,
+                    });
+                    setCustomModal({ open: false, saving: false });
+                  } catch (e) {
+                    console.error("Failed to create custom request:", e);
+                    setCustomModal((p) => ({ ...p, saving: false }));
+                  }
+                }}
+                disabled={customModal.saving || !customForm.name.trim() || !customForm.email.trim()}
+                style={{
+                  padding: "10px 20px",
+                  background:
+                    customModal.saving || !customForm.name.trim() || !customForm.email.trim()
+                      ? "rgba(255,255,255,0.1)"
+                      : "linear-gradient(135deg, #7c3aed, #a78bfa)",
+                  border: "none",
+                  borderRadius: 6,
+                  color: "#fff",
+                  cursor:
+                    customModal.saving || !customForm.name.trim() || !customForm.email.trim()
+                      ? "not-allowed"
+                      : "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                {customModal.saving ? "Creating..." : "Create Request"}
               </button>
             </div>
           </div>

@@ -74,6 +74,7 @@ function buildEmail(name, plan, endDate, daysRemaining) {
           <!-- Header -->
           <tr>
             <td align="center" style="padding:36px 32px 12px;">
+              <img src="https://shieldintelligence.in/logo512.png" alt="SHIELD Intelligence" width="100" height="100" style="display:block;margin:0 auto 12px;border-radius:12px;" />
               <h1 style="margin:0;font-size:26px;font-weight:900;color:#caa94c;letter-spacing:3px;text-shadow:0 0 12px rgba(202,169,76,0.35);">SHIELD INTELLIGENCE</h1>
               <p style="margin:8px 0 0;font-size:12px;color:#caa94c;letter-spacing:1.5px;opacity:0.7;text-transform:uppercase;">Securing Tomorrow with Strategic Intelligence.</p>
             </td>

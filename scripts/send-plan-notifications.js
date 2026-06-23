@@ -10,7 +10,8 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 console.log("Resend key prefix:", RESEND_API_KEY ? RESEND_API_KEY.substring(0, 6) + "..." : "MISSING");
 const resend = new Resend(RESEND_API_KEY);
 
-const FROM_EMAIL = process.env.SENDER_EMAIL || "SHIELD Intelligence <notification@shieldintelligence.in>";
+const RAW_SENDER = process.env.SENDER_EMAIL || "notification@shieldintelligence.in";
+const FROM_EMAIL = RAW_SENDER.includes("<") ? RAW_SENDER : `SHIELD Intelligence <${RAW_SENDER}>`;
 
 function getDaysRemaining(endDate) {
   const now = new Date();
@@ -31,7 +32,14 @@ function formatDate(dateStr) {
 }
 
 function buildEmail(name, plan, endDate, daysRemaining) {
-  const subject = "Notification";
+  let subject;
+  if (daysRemaining <= 0) {
+    subject = `${plan} — Plan Expired`;
+  } else if (daysRemaining <= 2) {
+    subject = `${plan} — Expiring in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`;
+  } else {
+    subject = `${plan} — Expiring Soon`;
+  }
 
   const body =
     daysRemaining <= 0

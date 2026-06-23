@@ -31,29 +31,26 @@ function formatDate(dateStr) {
 }
 
 function buildEmail(name, plan, endDate, daysRemaining) {
-  const subject =
-    daysRemaining <= 0
-      ? `Your ${plan} has expired — SHIELD`
-      : `Your ${plan} expires in ${daysRemaining} days — SHIELD`;
+  const subject = "Notification";
 
   const body =
     daysRemaining <= 0
       ? {
           heading: "Plan Expired",
-          message: `Your <strong>${plan}</strong> has expired. To avoid any disruption, please renew your plan at your earliest convenience.`,
-          extra: "If you have already renewed, please ignore this message.",
+          message: `Your <strong>${plan}</strong> has expired. If you believe this is an error or would like to discuss renewal options, please reach out to us.`,
+          extra: "If you have already renewed, please disregard this notice.",
         }
       : {
           heading: `Expiring in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`,
-          message: `This is a friendly reminder that your <strong>${plan}</strong> is set to expire on <strong>${formatDate(endDate)}</strong>.`,
+          message: `Your <strong>${plan}</strong> is set to expire on <strong>${formatDate(endDate)}</strong>. To avoid any disruption, please get in touch with us.`,
           extra:
             daysRemaining <= 2
-              ? "Please take action soon to ensure uninterrupted service."
-              : "You can renew your plan anytime before the expiration date.",
+              ? "Please reach out soon to ensure uninterrupted service."
+              : "You can contact us anytime before the expiration date.",
         };
 
-  const actionLabel = daysRemaining <= 0 ? "Renew Now" : "Review Your Plan";
-  const actionLink = `mailto:queriesshield@gmail.com?subject=${encodeURIComponent(subject)}`;
+  const actionLabel = daysRemaining <= 0 ? "Contact Us" : "Get in Touch";
+  const actionLink = "mailto:queriesshield@gmail.com";
 
   const html = `
 <!DOCTYPE html>
@@ -61,38 +58,38 @@ function buildEmail(name, plan, endDate, daysRemaining) {
 <head>
   <meta charset="utf-8">
 </head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#121212;">
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#121212;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#121212;">
     <tr>
       <td align="center" style="padding:40px 20px;">
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#1a1a1a;border-radius:16px;border:2px solid rgba(202,169,76,0.3);box-shadow:0 0 40px rgba(202,169,76,0.15);">
           <!-- Header -->
           <tr>
-            <td align="center" style="padding:36px 32px 0;">
-              <h1 style="margin:0;font-size:30px;font-weight:900;color:#caa94c;letter-spacing:3px;text-shadow:0 0 12px rgba(202,169,76,0.35);">SHIELD</h1>
-              <p style="margin:6px 0 0;font-size:12px;color:#caa94c;letter-spacing:2px;opacity:0.8;">SECURITY • HOSTING • INTEGRATION • ENGINEERING • DEVELOPMENT</p>
+            <td align="center" style="padding:36px 32px 12px;">
+              <h1 style="margin:0;font-size:26px;font-weight:900;color:#caa94c;letter-spacing:3px;text-shadow:0 0 12px rgba(202,169,76,0.35);">SHIELD INTELLIGENCE</h1>
+              <p style="margin:8px 0 0;font-size:12px;color:#caa94c;letter-spacing:1.5px;opacity:0.7;text-transform:uppercase;">Securing Tomorrow with Strategic Intelligence.</p>
             </td>
           </tr>
           <!-- Divider -->
-          <tr><td style="padding:0 32px;"><div style="height:2px;background:linear-gradient(90deg,transparent,rgba(202,169,76,0.5),transparent);box-shadow:0 0 8px rgba(202,169,76,0.2);"></div></td></tr>
+          <tr><td style="padding:0 32px;"><div style="height:2px;background:linear-gradient(90deg,transparent,rgba(202,169,76,0.5),transparent);"></div></td></tr>
           <!-- Body -->
           <tr>
             <td style="padding:32px 32px;">
-              <p style="margin:0 0 8px;font-size:15px;color:#aaa;">Hi ${name},</p>
-              <h2 style="margin:0 0 14px;font-size:24px;font-weight:700;color:#caa94c;text-shadow:0 0 8px rgba(202,169,76,0.25);">${body.heading}</h2>
-              <p style="margin:0 0 10px;font-size:16px;color:#e0e0e0;line-height:1.7;">${body.message}</p>
-              <p style="margin:0 0 24px;font-size:14px;color:#888;">${body.extra}</p>
+              <p style="margin:0 0 10px;font-size:15px;color:#aaa;">Hi ${name},</p>
+              <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#caa94c;">${body.heading}</h2>
+              <p style="margin:0 0 10px;font-size:15px;color:#d4d4d4;line-height:1.7;">${body.message}</p>
+              <p style="margin:0 0 28px;font-size:14px;color:#888;">${body.extra}</p>
               <!-- Details box -->
-              <table role="presentation" width="100%" cellpadding="14" cellspacing="0" style="background:rgba(202,169,76,0.06);border-radius:12px;border:1px solid rgba(202,169,76,0.2);margin-bottom:24px;">
-                <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.12);"><span style="color:#888;font-size:13px;">Plan</span><br><span style="color:#f0f0f0;font-size:16px;font-weight:600;">${plan}</span></td></tr>
-                <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.12);"><span style="color:#888;font-size:13px;">Billing End</span><br><span style="color:#f0f0f0;font-size:16px;font-weight:600;">${formatDate(endDate)}</span></td></tr>
-                <tr><td style="padding:12px 16px;"><span style="color:#888;font-size:13px;">Status</span><br><span style="color:${daysRemaining <= 0 ? "#ef4444" : "#caa94c"};font-size:16px;font-weight:700;text-shadow:${daysRemaining <= 0 ? "0 0 8px rgba(239,68,68,0.3)" : "0 0 8px rgba(202,169,76,0.25)"};">${daysRemaining <= 0 ? "Expired" : `Active — ${daysRemaining} day${daysRemaining > 1 ? "s" : ""} remaining`}</span></td></tr>
+              <table role="presentation" width="100%" cellpadding="14" cellspacing="0" style="background:rgba(202,169,76,0.05);border-radius:12px;border:1px solid rgba(202,169,76,0.18);margin-bottom:28px;">
+                <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Plan</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${plan}</span></td></tr>
+                <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Billing End</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${formatDate(endDate)}</span></td></tr>
+                <tr><td style="padding:12px 16px;"><span style="color:#888;font-size:13px;">Status</span><br><span style="color:${daysRemaining <= 0 ? "#ef4444" : "#caa94c"};font-size:16px;font-weight:700;">${daysRemaining <= 0 ? "Expired" : `Active — ${daysRemaining} day${daysRemaining > 1 ? "s" : ""} remaining`}</span></td></tr>
               </table>
               <!-- CTA -->
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td align="center">
-                    <a href="${actionLink}" style="display:inline-block;padding:14px 36px;background:linear-gradient(135deg,#caa94c,#e5c76a);color:#1a1a1a;font-size:15px;font-weight:800;text-decoration:none;border-radius:9999px;box-shadow:0 0 16px rgba(202,169,76,0.35);letter-spacing:0.5px;">${actionLabel}</a>
+                    <a href="${actionLink}" style="display:inline-block;padding:14px 36px;background:#caa94c;color:#1a1a1a;font-size:15px;font-weight:800;text-decoration:none;border-radius:9999px;box-shadow:0 0 16px rgba(202,169,76,0.35);letter-spacing:0.5px;">${actionLabel}</a>
                   </td>
                 </tr>
               </table>
@@ -101,9 +98,9 @@ function buildEmail(name, plan, endDate, daysRemaining) {
           <!-- Footer -->
           <tr>
             <td align="center" style="padding:0 32px 32px;">
-              <div style="height:1px;background:rgba(202,169,76,0.2);margin-bottom:16px;"></div>
-              <p style="margin:0;font-size:12px;color:#666;">SHIELD — Security, Hosting, Integration, Engineering, Development</p>
-              <p style="margin:4px 0 0;font-size:12px;color:#666;">If you have any questions, reply to this email or contact us at <a href="mailto:queriesshield@gmail.com" style="color:#caa94c;text-decoration:none;">queriesshield@gmail.com</a></p>
+              <div style="height:1px;background:rgba(202,169,76,0.15);margin-bottom:16px;"></div>
+              <p style="margin:0;font-size:11px;color:#666;line-height:1.5;">SHIELD Intelligence — Building secure software, authentication tools, and privacy-focused digital systems.</p>
+              <p style="margin:4px 0 0;font-size:11px;color:#555;">Contact: <a href="mailto:queriesshield@gmail.com" style="color:#caa94c;text-decoration:none;">queriesshield@gmail.com</a></p>
             </td>
           </tr>
         </table>

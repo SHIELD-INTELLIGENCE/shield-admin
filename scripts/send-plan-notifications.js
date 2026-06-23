@@ -10,7 +10,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 console.log("Resend key prefix:", RESEND_API_KEY ? RESEND_API_KEY.substring(0, 6) + "..." : "MISSING");
 const resend = new Resend(RESEND_API_KEY);
 
-const FROM_EMAIL = process.env.SENDER_EMAIL || "notification@shieldintelligence.in";
+const FROM_EMAIL = process.env.SENDER_EMAIL || "SHIELD Intelligence <notification@shieldintelligence.in>";
 
 function getDaysRemaining(endDate) {
   const now = new Date();

@@ -148,6 +148,8 @@ async function main() {
       alertType = "2_day";
     } else if (days <= 5 && lastAlert !== "expired" && lastAlert !== "2_day" && lastAlert !== "5_day") {
       alertType = "5_day";
+    } else if (days <= 7 && lastAlert !== "expired" && lastAlert !== "2_day" && lastAlert !== "5_day" && lastAlert !== "7_day") {
+      alertType = "7_day";
     }
 
     if (!alertType) {

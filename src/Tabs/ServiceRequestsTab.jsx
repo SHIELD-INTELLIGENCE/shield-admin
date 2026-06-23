@@ -37,14 +37,17 @@ function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleString();
+  return parsed.toLocaleDateString("en-IN", {
+    year: "numeric", month: "short", day: "numeric",
+  }) + " " + parsed.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDateOnly(value) {
   if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleDateString();
+  const date = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
+  const [y, m, d] = date.split("-");
+  return `${d}/${m}/${y}`;
 }
 
 function toDateInputValue(value) {
@@ -1282,7 +1285,10 @@ const ServiceRequestsTab = ({
     const isQuarterly = request.billingCycle
       ?.toLowerCase()
       .includes("quarterly");
-    const days = isQuarterly ? 90 : 30;
+    const isYearly = request.billingCycle
+      ?.toLowerCase()
+      .includes("yearly");
+    const days = isYearly ? 365 : isQuarterly ? 90 : 30;
 
     const billingStart =
       request.includesWebsiteBuilding && request.billingStartDate
@@ -2812,6 +2818,7 @@ const ServiceRequestsTab = ({
                     const endDate = new Date(end + "T00:00:00");
                     if (cycle === "Monthly") endDate.setMonth(endDate.getMonth() + 1);
                     else if (cycle === "Quarterly") endDate.setMonth(endDate.getMonth() + 3);
+                    else if (cycle === "Yearly") endDate.setFullYear(endDate.getFullYear() + 1);
                     end = endDate.toISOString().slice(0, 10);
                   }
                   setCustomForm({ ...customForm, billingCycle: cycle, billingEndDate: end });
@@ -2820,6 +2827,7 @@ const ServiceRequestsTab = ({
               >
                 <option value="Monthly">Monthly</option>
                 <option value="Quarterly">Quarterly</option>
+                <option value="Yearly">Yearly</option>
               </select>
 
               {customForm.plan === "Custom Plan" && (
@@ -2856,6 +2864,7 @@ const ServiceRequestsTab = ({
                     const endDate = new Date(startDate);
                     if (customForm.billingCycle === "Monthly") endDate.setMonth(endDate.getMonth() + 1);
                     else if (customForm.billingCycle === "Quarterly") endDate.setMonth(endDate.getMonth() + 3);
+                    else if (customForm.billingCycle === "Yearly") endDate.setFullYear(endDate.getFullYear() + 1);
                     end = endDate.toISOString().slice(0, 10);
                   }
                   setCustomForm({ ...customForm, billingStartDate: start, billingEndDate: end });
@@ -3000,6 +3009,7 @@ const ServiceRequestsTab = ({
               <select className="search-input" value={editForm.billingCycle} onChange={(e) => setEditForm({ ...editForm, billingCycle: e.target.value })} style={{ width: "100%", color: "#fff", background: "rgba(255,255,255,0.06)" }}>
                 <option value="Monthly">Monthly</option>
                 <option value="Quarterly">Quarterly</option>
+                <option value="Yearly">Yearly</option>
               </select>
 
               <input className="search-input" placeholder="Billing Start Date" type="date" value={editForm.billingStartDate} onChange={(e) => setEditForm({ ...editForm, billingStartDate: e.target.value })} style={{ width: "100%" }} />

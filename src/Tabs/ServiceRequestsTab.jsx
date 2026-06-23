@@ -411,6 +411,8 @@ const ServiceRequestsTab = ({
     saving: false,
   });
   const [confirmModal, setConfirmModal] = useState({ open: false });
+  const [editModal, setEditModal] = useState({ open: false, saving: false, request: null });
+  const [editForm, setEditForm] = useState({});
   const [customModal, setCustomModal] = useState({ open: false, saving: false });
   const [customForm, setCustomForm] = useState({
     name: "",
@@ -434,6 +436,7 @@ const ServiceRequestsTab = ({
     !!creditModal ||
     !!invoiceModal.open ||
     !!customModal.open ||
+    !!editModal.open ||
     !!confirmModal.open;
 
   const toggleMenu = (index) => {
@@ -1042,6 +1045,23 @@ const ServiceRequestsTab = ({
     String(email || "")
       .trim()
       .toLowerCase();
+
+  const handleEditRequest = (request) => {
+    if (!request) return;
+    setEditForm({
+      name: request.name || "",
+      email: request.email || "",
+      preferredContact: request.preferredContact || "",
+      otherContacts: request.otherContacts || "",
+      plan: request.plan || "To be discussed",
+      billingCycle: request.billingCycle || "Monthly",
+      requirements: request.requirements || "",
+      projectReference: request.projectReference || "",
+      billingStartDate: request.billingStartDate ? request.billingStartDate.slice(0, 10) : "",
+      billingEndDate: request.billingEndDate ? request.billingEndDate.slice(0, 10) : "",
+    });
+    setEditModal({ open: true, saving: false, request });
+  };
 
   const handleClearPlan = async (request) => {
     if (!request || !request.id) return;
@@ -1715,6 +1735,12 @@ const ServiceRequestsTab = ({
                         onClick={() => handleClearPlan(request)}
                       >
                         Clear Plan Details
+                      </span>
+                      <span
+                        className="menu-item"
+                        onClick={() => handleEditRequest(request)}
+                      >
+                        Edit Request
                       </span>
                       <span
                         className="menu-item"
@@ -2938,6 +2964,94 @@ const ServiceRequestsTab = ({
                 }}
               >
                 {customModal.saving ? "Creating..." : "Create Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Request Modal */}
+      {editModal.open && (
+        <div
+          className="modal-overlay"
+          onClick={() => { if (!editModal.saving) setEditModal({ open: false, saving: false, request: null }); }}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: 520, width: "100%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 16px", color: "#fbbf24" }}>Edit Request</h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <input className="search-input" placeholder="Name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} style={{ width: "100%" }} />
+              <input className="search-input" placeholder="Email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} style={{ width: "100%" }} />
+              <input className="search-input" placeholder="Preferred Contact" value={editForm.preferredContact} onChange={(e) => setEditForm({ ...editForm, preferredContact: e.target.value })} style={{ width: "100%" }} />
+              <input className="search-input" placeholder="Other Contacts" value={editForm.otherContacts} onChange={(e) => setEditForm({ ...editForm, otherContacts: e.target.value })} style={{ width: "100%" }} />
+
+              <select className="search-input" value={editForm.plan} onChange={(e) => setEditForm({ ...editForm, plan: e.target.value })} style={{ width: "100%", color: "#fff", background: "rgba(255,255,255,0.06)" }}>
+                <option value="To be discussed">To be discussed</option>
+                <option value="Starter Plan">Starter Plan</option>
+                <option value="Premium Plan">Premium Plan</option>
+                <option value="Elite Plan">Elite Plan</option>
+                <option value="Custom Plan">Custom Plan</option>
+              </select>
+
+              <select className="search-input" value={editForm.billingCycle} onChange={(e) => setEditForm({ ...editForm, billingCycle: e.target.value })} style={{ width: "100%", color: "#fff", background: "rgba(255,255,255,0.06)" }}>
+                <option value="Monthly">Monthly</option>
+                <option value="Quarterly">Quarterly</option>
+              </select>
+
+              <input className="search-input" placeholder="Billing Start Date" type="date" value={editForm.billingStartDate} onChange={(e) => setEditForm({ ...editForm, billingStartDate: e.target.value })} style={{ width: "100%" }} />
+              <input className="search-input" placeholder="Billing End Date" type="date" value={editForm.billingEndDate} onChange={(e) => setEditForm({ ...editForm, billingEndDate: e.target.value })} style={{ width: "100%" }} />
+
+              <input className="search-input" placeholder="Project Reference" value={editForm.projectReference} onChange={(e) => setEditForm({ ...editForm, projectReference: e.target.value })} style={{ width: "100%" }} />
+
+              <textarea className="search-input" placeholder="Requirements" value={editForm.requirements} onChange={(e) => setEditForm({ ...editForm, requirements: e.target.value })} rows={3} style={{ width: "100%", resize: "vertical" }} />
+            </div>
+
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 20 }}>
+              <button
+                onClick={() => setEditModal({ open: false, saving: false, request: null })}
+                disabled={editModal.saving}
+                style={{ padding: "10px 20px", background: "transparent", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6, color: "#fff", cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!editModal.request?.id) return;
+                  setEditModal((p) => ({ ...p, saving: true }));
+                  try {
+                    const updates = {
+                      name: editForm.name.trim(),
+                      email: editForm.email.trim(),
+                      preferredContact: editForm.preferredContact,
+                      otherContacts: editForm.otherContacts,
+                      plan: editForm.plan,
+                      billingCycle: editForm.billingCycle,
+                      billingStartDate: editForm.billingStartDate ? new Date(editForm.billingStartDate).toISOString() : "",
+                      billingEndDate: editForm.billingEndDate ? new Date(editForm.billingEndDate).toISOString() : "",
+                      projectReference: editForm.projectReference,
+                      requirements: editForm.requirements,
+                    };
+                    await updateDoc(doc(db, "serviceRequests", editModal.request.id), updates);
+                    setEditModal({ open: false, saving: false, request: null });
+                  } catch (e) {
+                    console.error("Failed to update request:", e);
+                    setEditModal((p) => ({ ...p, saving: false }));
+                  }
+                }}
+                disabled={editModal.saving || !editForm.name.trim() || !editForm.email.trim()}
+                style={{
+                  padding: "10px 20px",
+                  background: editModal.saving || !editForm.name.trim() || !editForm.email.trim() ? "rgba(255,255,255,0.1)" : "linear-gradient(135deg, #7c3aed, #a78bfa)",
+                  border: "none", borderRadius: 6, color: "#fff",
+                  cursor: editModal.saving || !editForm.name.trim() || !editForm.email.trim() ? "not-allowed" : "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                {editModal.saving ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>

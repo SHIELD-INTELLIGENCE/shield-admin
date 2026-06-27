@@ -151,202 +151,202 @@ function buildShortInvoiceMessage(invoice) {
 async function buildInvoicePdf(invoice) {
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
 
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 16;
-  const contentWidth = pageWidth - margin * 2;
+  const pw = pdf.internal.pageSize.getWidth();
+  const ph = pdf.internal.pageSize.getHeight();
+  const m = 16;
+  const cw = pw - m * 2;
 
-  pdf.setLineHeightFactor(1.4);
+  pdf.setLineHeightFactor(1.3);
 
-  // Background
-  pdf.setFillColor(255, 255, 255);
-  pdf.rect(0, 0, pageWidth, pageHeight, "F");
+  // Dark background
+  pdf.setFillColor(18, 18, 18);
+  pdf.rect(0, 0, pw, ph, "F");
+
+  // Gold accent bar at top
+  pdf.setFillColor(202, 169, 76);
+  pdf.rect(0, 0, pw, 3, "F");
 
   // Logo
-  const logoDataUrl = await loadImageAsDataUrl("/logo.png").catch((e) => {
-    console.warn("Logo load failed", e);
-    return null;
-  });
+  const logoUrl = "https://shieldintelligence.in/logo512.png";
+  const logoDataUrl = await loadImageAsDataUrl(logoUrl).catch(() => null);
 
+  // ── HEADER ──
   if (logoDataUrl) {
-    pdf.addImage(logoDataUrl, "PNG", margin, 14, 16, 16);
+    pdf.addImage(logoDataUrl, "PNG", m, 10, 18, 18);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(22);
+    pdf.setTextColor(202, 169, 76);
+    pdf.text("SHIELD INTELLIGENCE", m + 24, 18);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(202, 169, 76, 0.6);
+    pdf.text("Securing Tomorrow with Strategic Intelligence.", m + 24, 24);
+  } else {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(22);
+    pdf.setTextColor(202, 169, 76);
+    pdf.text("SHIELD INTELLIGENCE", m, 18);
   }
 
-  // Header
-  const headerX = logoDataUrl ? margin + 22 : margin;
+  // Gold divider
+  pdf.setDrawColor(202, 169, 76);
+  pdf.setLineWidth(0.4);
+  pdf.line(m, 34, pw - m, 34);
 
+  // ── INVOICE TITLE + META ──
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(20);
-  pdf.setTextColor(17, 24, 39);
-  pdf.text("SHIELD", headerX, 20);
+  pdf.setFontSize(26);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text("INVOICE", m, 52);
+
+  const invoiceDateStr = invoice.createdAt || new Date().toISOString();
+  const metaX = pw - m;
 
   pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(11);
-  pdf.setTextColor(75, 85, 99);
-  pdf.text("Invoice", headerX, 26);
-
-  // Meta (Right side)
+  pdf.setFontSize(9);
+  pdf.setTextColor(160, 160, 160);
+  pdf.text(`Invoice ID:`, metaX, 46, { align: "right" });
+  pdf.setTextColor(220, 220, 220);
+  pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10);
-  pdf.setTextColor(55, 65, 81);
-  pdf.text(`Invoice ID: ${invoice.invoiceId || "—"}`, pageWidth - margin, 18, { align: "right" });
-  
-  // Quick check for standard date extraction
-  const invoiceDate = invoice.createdAt || new Date().toISOString();
-  pdf.text(
-    `Date: ${formatDateOnly(invoiceDate)}`,
-    pageWidth - margin,
-    24,
-    { align: "right" }
-  );
+  pdf.text(invoice.invoiceId || "—", metaX, 52, { align: "right" });
 
-  // Divider
-  pdf.setDrawColor(209, 213, 219);
-  pdf.setLineWidth(0.3);
-  pdf.line(margin, 34, pageWidth - margin, 34);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9);
+  pdf.setTextColor(160, 160, 160);
+  pdf.text(`Date Issued:`, metaX, 60, { align: "right" });
+  pdf.setTextColor(220, 220, 220);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10);
+  pdf.text(formatDateOnly(invoiceDateStr), metaX, 66, { align: "right" });
 
+  // Status badge
   const statusPaid = normalizeStatusLabel(invoice.status) === "Paid";
+  const badgeText = statusPaid ? "PAID" : "UNPAID";
+  pdf.setFillColor(...(statusPaid ? [21, 128, 61] : [180, 100, 20]));
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(9);
+  const bw = pdf.getTextWidth(badgeText) + 10;
+  const bh = 6;
+  pdf.roundedRect(metaX - bw, 70, bw, bh, 2, 2, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.text(badgeText, metaX - bw / 2, 70 + 4.5, { align: "center" });
 
-  // Sections Configuration
-  const sections = [
-    {
-      title: "Client Details",
-      rows: [
-        ["Name", invoice.clientName || "—"],
-        ["Email", invoice.clientEmail || "—"],
-      ],
-    },
-    {
-      title: "Billing Details",
-      rows: [
-        ["Plan", invoice.planName || "—"],
-        ["Amount", formatCurrency(invoice.amount)], // Uses fixed formatter below
-        ["Billing Period", `${formatDateOnly(invoice.billingStartDate) || "—"} to ${formatDateOnly(invoice.billingEndDate) || "—"}`],
-      ],
-    },
-    {
-      title: "Status",
-      rows: [
-        ["Payment Status", normalizeStatusLabel(invoice.status)],
-        ["Payment Method", invoice.paymentMethod || "—"],
-        ["Transaction Ref", invoice.transactionReference || "—"],
-      ],
-    },
-  ];
+  // ── BILL TO ──
+  let cy = 88;
+  pdf.setFillColor(30, 30, 30);
+  pdf.roundedRect(m, cy, cw, 24, 4, 4, "F");
+  pdf.setDrawColor(202, 169, 76, 0.25);
+  pdf.roundedRect(m, cy, cw, 24, 4, 4, "S");
 
-  let cursorY = 42;
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(9);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text("BILL TO", m + 12, cy + 8);
 
-  sections.forEach((section) => {
-    // 1. Pre-calculate Box Height accurately based on text rows
-    let totalTextHeight = 0;
-    
-    // Set standard font settings temporarily to measure text accurately
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(10);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(10);
+  pdf.setTextColor(220, 220, 220);
+  pdf.text(invoice.clientName || "—", m + 12, cy + 18);
 
-    section.rows.forEach(([label, value]) => {
-      // Calculate remaining horizontal space available for the values
-      const maxValueWidth = (label === "Amount") ? contentWidth - 50 : contentWidth - 46;
-      const lines = pdf.splitTextToSize(String(value), maxValueWidth);
-      totalTextHeight += Math.max(1, lines.length) * 7;
-    });
+  pdf.setTextColor(160, 160, 160);
+  pdf.setFontSize(9);
+  pdf.text(invoice.clientEmail || "", pw - m - 12, cy + 18, { align: "right" });
 
-    // Box Height = Header offset padding (16mm) + content block + bottom padding (4mm)
-    const boxHeight = 16 + totalTextHeight + 4;
+  // ── INVOICE DETAILS TABLE ──
+  cy += 32;
+  const col1X = m + 12;
+  const col2X = m + 60;
+  const col3X = m + 100;
+  const col4X = pw - m - 12;
+  const rowH = 7;
 
-    // Render Box Container
-    pdf.setFillColor(249, 250, 251);
-    pdf.roundedRect(margin, cursorY, contentWidth, boxHeight, 3, 3, "F");
+  // Table header
+  pdf.setFillColor(40, 40, 40);
+  pdf.rect(m, cy, cw, rowH + 4, "F");
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text("DESCRIPTION", col1X, cy + rowH);
+  pdf.text("PERIOD", col2X, cy + rowH);
+  pdf.text("RATE", col3X, cy + rowH);
+  pdf.text("AMOUNT", col4X, cy + rowH, { align: "right" });
 
-    pdf.setDrawColor(229, 231, 235);
-    pdf.roundedRect(margin, cursorY, contentWidth, boxHeight, 3, 3, "S");
+  cy += rowH + 4;
+  pdf.setFillColor(24, 24, 24);
+  pdf.rect(m, cy, cw, rowH + 6, "F");
 
-    // Container Header Title
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(12);
-    pdf.setTextColor(17, 24, 39);
-    pdf.text(section.title, margin + 12, cursorY + 9);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9);
+  pdf.setTextColor(220, 220, 220);
+  pdf.text(invoice.planName || "Service Plan", col1X, cy + rowH);
 
-    pdf.setDrawColor(229, 231, 235);
-    pdf.line(margin + 12, cursorY + 13, pageWidth - margin - 12, cursorY + 13);
+  const period = `${formatDateOnly(invoice.billingStartDate) || "—"} to ${formatDateOnly(invoice.billingEndDate) || "—"}`;
+  pdf.setFontSize(7);
+  pdf.setTextColor(160, 160, 160);
+  pdf.text(period, col2X, cy + rowH);
 
-    // Render Data Rows
-    let rowY = cursorY + 20;
+  pdf.setFontSize(9);
+  pdf.setTextColor(200, 200, 200);
+  pdf.text(formatCurrency(invoice.amount), col3X, cy + rowH);
 
-    section.rows.forEach(([label, value]) => {
-      // Left Label
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(10);
-      pdf.setTextColor(75, 85, 99);
-      pdf.text(`${label}:`, margin + 12, rowY);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text(formatCurrency(invoice.amount), col4X, cy + rowH, { align: "right" });
 
-      // Right Side Value
-      pdf.setTextColor(17, 24, 39);
-      
-      if (label === "Amount") {
-        // Fix standard alignment & text breaking bugs for amounts 
-        pdf.setFont("helvetica", "bold"); 
-        pdf.text(String(value), pageWidth - margin - 12, rowY, { align: "right" });
-        rowY += 7;
-      } else {
-        const lines = pdf.splitTextToSize(String(value), contentWidth - 46);
-        pdf.text(lines, margin + 46, rowY);
-        rowY += lines.length * 7;
-      }
-    });
+  // ── TOTAL ROW ──
+  cy += rowH + 6;
+  pdf.setFillColor(40, 40, 40);
+  pdf.rect(m, cy, cw, rowH + 4, "F");
+  pdf.setDrawColor(202, 169, 76, 0.5);
+  pdf.line(m, cy, pw - m, cy);
 
-    // Status Badge Component
-    if (section.title === "Status") {
-      const badgeText = statusPaid ? "PAID" : "UNPAID";
-      // Using accessible, readable colors matching Tailwind configurations
-      const badgeBgColor = statusPaid ? [220, 252, 231] : [254, 243, 199]; // Light green / Light amber
-      const badgeTextColor = statusPaid ? [21, 128, 61] : [180, 83, 9];   // Dark green / Dark amber
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text("TOTAL", col1X, cy + rowH);
+  pdf.setFontSize(11);
+  pdf.text(formatCurrency(invoice.amount), col4X, cy + rowH, { align: "right" });
 
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(9);
-      
-      const badgeWidth = pdf.getTextWidth(badgeText) + 8;
-      const badgeHeight = 6;
+  // ── PAYMENT INFO ──
+  cy += rowH + 10;
+  pdf.setFillColor(30, 30, 30);
+  pdf.roundedRect(m, cy, cw, 26, 4, 4, "F");
+  pdf.setDrawColor(202, 169, 76, 0.2);
+  pdf.roundedRect(m, cy, cw, 26, 4, 4, "S");
 
-      // Draw Badge Background Box
-      pdf.setFillColor(...badgeBgColor);
-      pdf.roundedRect(
-        pageWidth - margin - 12 - badgeWidth,
-        cursorY + 5,
-        badgeWidth,
-        badgeHeight,
-        1.5,
-        1.5,
-        "F"
-      );
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(9);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text("PAYMENT INFORMATION", m + 12, cy + 8);
 
-      // Render Badge Text
-      pdf.setTextColor(...badgeTextColor);
-      pdf.text(
-        badgeText,
-        pageWidth - margin - 12 - badgeWidth / 2,
-        cursorY + 5 + 4.5,
-        { align: "center" }
-      );
-    }
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  pdf.setTextColor(160, 160, 160);
+  pdf.text(`Method: ${invoice.paymentMethod || "—"}`, m + 12, cy + 18);
+  pdf.text(`Reference: ${invoice.transactionReference || "—"}`, pw - m - 12, cy + 18, { align: "right" });
 
-    // Advance block cursor position safely
-    cursorY += boxHeight + 6;
-  });
-
-  // Global Page Footer
-  pdf.setDrawColor(229, 231, 235);
-  pdf.line(margin, pageHeight - 22, pageWidth - margin, pageHeight - 22);
+  // ── FOOTER ──
+  pdf.setDrawColor(202, 169, 76, 0.3);
+  pdf.setLineWidth(0.3);
+  pdf.line(m, ph - 24, pw - m, ph - 24);
 
   pdf.setFont("helvetica", "italic");
-  pdf.setFontSize(9);
-  pdf.setTextColor(107, 114, 128);
+  pdf.setFontSize(8);
+  pdf.setTextColor(120, 120, 120);
+  pdf.text("SHIELD Intelligence — Building secure software, authentication tools, and privacy-focused digital systems.", m, ph - 18);
+  pdf.text("Contact: queriesshield@gmail.com", m, ph - 13);
 
-  pdf.text("Internal Invoice — SHIELD", margin, pageHeight - 14);
-  pdf.text("Thank you for working with us", pageWidth / 2, pageHeight - 14, {
-    align: "center",
-  });
+  pdf.setTextColor(202, 169, 76, 0.5);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8);
+  pdf.text("Thank you for your business", pw - m, ph - 13, { align: "right" });
 
-  // Export File
+  // Gold accent bar at bottom
+  pdf.setFillColor(202, 169, 76);
+  pdf.rect(0, ph - 2, pw, 2, "F");
+
   pdf.save(`${invoice.invoiceId || "SHIELD-invoice"}.pdf`);
 }
 

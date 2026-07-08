@@ -3,7 +3,7 @@ import "../global.css";
 import CustomDropdown from "../components/CustomDropdown.jsx";
 import ConfirmModal from "../components/ConfirmModal.jsx";
 import { jsPDF } from "jspdf";
-import { doc, updateDoc, deleteDoc, runTransaction, addDoc, collection } from "firebase/firestore";
+import { doc, updateDoc, deleteDoc, runTransaction, addDoc, collection, arrayUnion } from "firebase/firestore";
 import { db, invoicesCollection } from "../firebase.js";
 
 // Tier limits configuration
@@ -20,6 +20,44 @@ const PLAN_INVOICE_AMOUNTS = {
   "Elite Plan": 5999,
   "To be discussed": 0,
 };
+
+const LIFECYCLE_PHASES = [
+  { value: "lead", label: "Lead" },
+  { value: "consultation", label: "Consultation" },
+  { value: "quotation-sent", label: "Quotation Sent" },
+  { value: "negotiation", label: "Negotiation" },
+  { value: "awaiting-payment", label: "Awaiting Payment" },
+  { value: "project-started", label: "Project Started" },
+  { value: "development", label: "Development" },
+  { value: "internal-testing", label: "Internal Testing" },
+  { value: "client-review", label: "Client Review" },
+  { value: "ready-deployment", label: "Ready for Deployment" },
+  { value: "live", label: "Live" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "paused", label: "Paused" },
+  { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
+const WEBSITE_STATUSES = [
+  { value: "building", label: "Building" },
+  { value: "testing", label: "Testing" },
+  { value: "live", label: "Live" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "paused", label: "Paused" },
+  { value: "offline", label: "Offline" },
+  { value: "migrating", label: "Migrating" },
+  { value: "archived", label: "Archived" },
+];
+
+const PAYMENT_STATUSES = [
+  { value: "pending", label: "Pending" },
+  { value: "partial", label: "Partial" },
+  { value: "paid", label: "Paid" },
+  { value: "overdue", label: "Overdue" },
+  { value: "suspended", label: "Suspended" },
+  { value: "refunded", label: "Refunded" },
+];
 
 function getRequestBaseDate(request) {
   const source = request?.createdAt || request?.date;
@@ -102,6 +140,12 @@ function getInvoiceDraftFromRequest(request) {
     requestId: request.id,
     clientName: request.name || "",
     clientEmail: request.email || "",
+    clientPhone: request.phone || "",
+    clientOrganization: request.orgType || request.organizationType || "",
+    clientIndustry: request.industry || "",
+    projectName: request.projectTitle || request.name || "",
+    projectDescription: request.projectDescription || "",
+    companySize: request.companySize || "",
     planName: request.plan || "",
     amount: String(getDefaultInvoiceAmount(request.plan, request)),
     billingStartDate: toDateInputValue(billingStartDate),
@@ -167,37 +211,47 @@ async function buildInvoicePdf(invoice) {
   pdf.rect(0, 0, pw, 3, "F");
 
   // Logo
-  const logoUrl = "https://shieldintelligence.in/logo512.png";
-  const logoDataUrl = await loadImageAsDataUrl(logoUrl).catch(() => null);
-
-  // ── HEADER ──
-  if (logoDataUrl) {
-    pdf.addImage(logoDataUrl, "PNG", m, 10, 18, 18);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(22);
-    pdf.setTextColor(202, 169, 76);
-    pdf.text("SHIELD INTELLIGENCE", m + 24, 18);
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(8);
-    pdf.setTextColor(202, 169, 76, 0.6);
-    pdf.text("Securing Tomorrow with Strategic Intelligence.", m + 24, 24);
-  } else {
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(22);
-    pdf.setTextColor(202, 169, 76);
-    pdf.text("SHIELD INTELLIGENCE", m, 18);
+  let shieldLogoB64 = null;
+  try {
+    const resp = await fetch("/logo.png");
+    if (resp.ok) {
+      const blob = await resp.blob();
+      shieldLogoB64 = await new Promise(resolve => {
+        const r = new FileReader();
+        r.onloadend = () => resolve(r.result.split(",", 2)[1]);
+        r.readAsDataURL(blob);
+      });
+    }
+  } catch (e) { /* logo unavailable */ }
+  if (shieldLogoB64) {
+    try { pdf.addImage(shieldLogoB64, "PNG", m, 10, 18, 18); } catch (e) { console.warn("PDF logo failed:", e); }
   }
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(22);
+  pdf.setTextColor(202, 169, 76);
+  pdf.text("SHIELD INTELLIGENCE", m + 24, 18);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  pdf.setTextColor(202, 169, 76, 0.6);
+  pdf.text("Securing Tomorrow with Strategic Intelligence.", m + 24, 24);
+
+  // Business info
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(7);
+  pdf.setTextColor(140, 140, 140);
+  pdf.text("SHIELD Intelligence | queriesshield@gmail.com", m + 24, 29);
+  pdf.text("Haldwani, Uttarakhand, India", m + 24, 33);
 
   // Gold divider
   pdf.setDrawColor(202, 169, 76);
   pdf.setLineWidth(0.4);
-  pdf.line(m, 34, pw - m, 34);
+  pdf.line(m, 38, pw - m, 38);
 
   // ── INVOICE TITLE + META ──
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(26);
   pdf.setTextColor(202, 169, 76);
-  pdf.text("INVOICE", m, 52);
+  pdf.text("INVOICE", m, 56);
 
   const invoiceDateStr = invoice.createdAt || new Date().toISOString();
   const metaX = pw - m;
@@ -205,20 +259,20 @@ async function buildInvoicePdf(invoice) {
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
   pdf.setTextColor(160, 160, 160);
-  pdf.text(`Invoice ID:`, metaX, 46, { align: "right" });
+  pdf.text(`Invoice ID:`, metaX, 50, { align: "right" });
   pdf.setTextColor(220, 220, 220);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10);
-  pdf.text(invoice.invoiceId || "—", metaX, 52, { align: "right" });
+  pdf.text(invoice.invoiceId || "—", metaX, 56, { align: "right" });
 
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
   pdf.setTextColor(160, 160, 160);
-  pdf.text(`Date Issued:`, metaX, 60, { align: "right" });
+  pdf.text(`Date Issued:`, metaX, 64, { align: "right" });
   pdf.setTextColor(220, 220, 220);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10);
-  pdf.text(formatDateOnly(invoiceDateStr), metaX, 66, { align: "right" });
+  pdf.text(formatDateOnly(invoiceDateStr), metaX, 70, { align: "right" });
 
   // Status badge
   const statusPaid = normalizeStatusLabel(invoice.status) === "Paid";
@@ -228,16 +282,16 @@ async function buildInvoicePdf(invoice) {
   pdf.setFontSize(9);
   const bw = pdf.getTextWidth(badgeText) + 10;
   const bh = 6;
-  pdf.roundedRect(metaX - bw, 70, bw, bh, 2, 2, "F");
+  pdf.roundedRect(metaX - bw, 74, bw, bh, 2, 2, "F");
   pdf.setTextColor(255, 255, 255);
-  pdf.text(badgeText, metaX - bw / 2, 70 + 4.5, { align: "center" });
+  pdf.text(badgeText, metaX - bw / 2, 74 + 4.5, { align: "center" });
 
   // ── BILL TO ──
-  let cy = 88;
+  let cy = 92;
   pdf.setFillColor(30, 30, 30);
-  pdf.roundedRect(m, cy, cw, 24, 4, 4, "F");
+  pdf.roundedRect(m, cy, cw, 34, 4, 4, "F");
   pdf.setDrawColor(202, 169, 76, 0.25);
-  pdf.roundedRect(m, cy, cw, 24, 4, 4, "S");
+  pdf.roundedRect(m, cy, cw, 34, 4, 4, "S");
 
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(9);
@@ -249,12 +303,48 @@ async function buildInvoicePdf(invoice) {
   pdf.setTextColor(220, 220, 220);
   pdf.text(invoice.clientName || "—", m + 12, cy + 18);
 
+  pdf.setFontSize(8);
   pdf.setTextColor(160, 160, 160);
-  pdf.setFontSize(9);
-  pdf.text(invoice.clientEmail || "", pw - m - 12, cy + 18, { align: "right" });
+  if (invoice.clientEmail) pdf.text(invoice.clientEmail, m + 12, cy + 26);
+  if (invoice.clientPhone) pdf.text(invoice.clientPhone, m + 80, cy + 26);
+
+  if (invoice.clientOrganization || invoice.clientIndustry) {
+    const orgLine = [invoice.clientOrganization, invoice.clientIndustry].filter(Boolean).join(" | ");
+    pdf.setTextColor(160, 160, 160);
+    pdf.setFontSize(8);
+    pdf.text(orgLine, pw - m - 12, cy + 18, { align: "right" });
+  }
+
+  // ── PROJECT INFO ──
+  cy += 40;
+  if (invoice.projectName) {
+    const projH = 22;
+    pdf.setFillColor(30, 30, 30);
+    pdf.roundedRect(m, cy, cw, projH, 4, 4, "F");
+    pdf.setDrawColor(202, 169, 76, 0.25);
+    pdf.roundedRect(m, cy, cw, projH, 4, 4, "S");
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    pdf.setTextColor(202, 169, 76);
+    pdf.text("PROJECT", m + 12, cy + 8);
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(220, 220, 220);
+    pdf.text(invoice.projectName, m + 12, cy + 18);
+
+    if (invoice.companySize) {
+      pdf.setFontSize(8);
+      pdf.setTextColor(160, 160, 160);
+      pdf.text(`Size: ${invoice.companySize}`, pw - m - 12, cy + 18, { align: "right" });
+    }
+
+    cy += projH + 4;
+  }
 
   // ── INVOICE DETAILS TABLE ──
-  cy += 32;
+  cy += 4;
   const col1X = m + 12;
   const col2X = m + 60;
   const col3X = m + 100;
@@ -388,6 +478,25 @@ const ServiceRequestsTab = ({
   focusRequestId,
 }) => {
   const [menuOpen, setMenuOpen] = useState(null);
+  const [menuPos, setMenuPos] = useState(null);
+  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); };
+
+  const recordTimelineEvent = async (requestId, action, notes = "") => {
+    if (!requestId) return;
+    try {
+      const ref = doc(db, "serviceRequests", requestId);
+      await updateDoc(ref, {
+        timeline: arrayUnion({
+          timestamp: new Date().toISOString(),
+          action,
+          notes: notes || "",
+        }),
+      });
+    } catch (e) {
+      console.error("Failed to record timeline event:", e);
+    }
+  };
+
   const [query, setQuery] = useState("");
   const [filterSource, setFilterSource] = useState("any");
   const [filterAccepted, setFilterAccepted] = useState("any");
@@ -435,6 +544,7 @@ const ServiceRequestsTab = ({
   });
 
   const anyModalOpen =
+    !!menuOpen ||
     !!updatePlanModal ||
     !!creditModal ||
     !!invoiceModal.open ||
@@ -442,9 +552,38 @@ const ServiceRequestsTab = ({
     !!editModal.open ||
     !!confirmModal.open;
 
-  const toggleMenu = (index) => {
-    setMenuOpen(menuOpen === index ? null : index);
+  const toggleMenu = (index, event) => {
+    if (menuOpen === index) { closeMenu(); return; }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuW = 220;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuW;
+    if (left < 8) left = 8;
+    if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
+    if (top + 300 > window.innerHeight) top = rect.top - 4;
+    setMenuPos({ top, left });
+    setMenuOpen(index);
   };
+
+  useEffect(() => {
+    if (!menuOpen && !menuPos) return;
+    const handleClick = (e) => {
+      if (!e.target.closest(".menu-container") && !e.target.closest(".menu-dropdown")) {
+        closeMenu();
+      }
+    };
+    const handleScroll = () => {
+      closeMenu();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", closeMenu);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", closeMenu);
+    };
+  }, [menuOpen, menuPos]);
 
   // Disable dashboard elevation while modal is open to avoid hover flicker
   useEffect(() => {
@@ -524,7 +663,7 @@ const ServiceRequestsTab = ({
   const handleUpdatePlan = (request) => {
     setUpdatePlanModal(request);
     setNewPlan(request.plan || "");
-    setMenuOpen(null);
+    closeMenu();
   };
 
   const handleOpenCreditModal = (request) => {
@@ -535,7 +674,7 @@ const ServiceRequestsTab = ({
         [request.id]: { largeCommits: 0, smallChanges: 0 },
       }));
     }
-    setMenuOpen(null);
+    closeMenu();
   };
 
   function getAlertType(daysRemaining) {
@@ -605,6 +744,12 @@ const ServiceRequestsTab = ({
       draft: {
         clientName: invoice.clientName || "",
         clientEmail: invoice.clientEmail || "",
+        clientPhone: invoice.clientPhone || "",
+        clientOrganization: invoice.clientOrganization || "",
+        clientIndustry: invoice.clientIndustry || "",
+        projectName: invoice.projectName || "",
+        projectDescription: invoice.projectDescription || "",
+        companySize: invoice.companySize || "",
         planName: invoice.planName || "",
         amount: String(invoice.amount ?? ""),
         billingStartDate: toDateInputValue(invoice.billingStartDate),
@@ -708,6 +853,12 @@ const ServiceRequestsTab = ({
             invoiceId: createdInvoiceId,
             clientName: invoiceModal.draft.clientName || "",
             clientEmail: invoiceModal.draft.clientEmail || "",
+            clientPhone: invoiceModal.draft.clientPhone || "",
+            clientOrganization: invoiceModal.draft.clientOrganization || "",
+            clientIndustry: invoiceModal.draft.clientIndustry || "",
+            projectName: invoiceModal.draft.projectName || "",
+            projectDescription: invoiceModal.draft.projectDescription || "",
+            companySize: invoiceModal.draft.companySize || "",
             planName: invoiceModal.draft.planName || "",
             amount: Number.isFinite(nextAmount) ? nextAmount : 0,
             billingStartDate: nextStart,
@@ -738,6 +889,10 @@ const ServiceRequestsTab = ({
           message: `Invoice generated${createdInvoiceId ? ` (${createdInvoiceId})` : ""}.`,
           cancelLabel: "OK",
         });
+        await recordTimelineEvent(
+          invoiceModal.requestId,
+          `Invoice generated (${createdInvoiceId})`,
+        );
       } else {
         const invoiceRef = doc(db, "invoices", invoiceModal.invoiceId);
         const requestRef = invoiceModal.requestId
@@ -748,6 +903,12 @@ const ServiceRequestsTab = ({
           transaction.update(invoiceRef, {
             clientName: invoiceModal.draft.clientName || "",
             clientEmail: invoiceModal.draft.clientEmail || "",
+            clientPhone: invoiceModal.draft.clientPhone || "",
+            clientOrganization: invoiceModal.draft.clientOrganization || "",
+            clientIndustry: invoiceModal.draft.clientIndustry || "",
+            projectName: invoiceModal.draft.projectName || "",
+            projectDescription: invoiceModal.draft.projectDescription || "",
+            companySize: invoiceModal.draft.companySize || "",
             planName: invoiceModal.draft.planName || "",
             amount: Number.isFinite(nextAmount) ? nextAmount : 0,
             billingStartDate: nextStart,
@@ -790,6 +951,12 @@ const ServiceRequestsTab = ({
               : "Invoice updated.",
           cancelLabel: "OK",
         });
+        if (nextStatus === "paid") {
+          await recordTimelineEvent(
+            invoiceModal.requestId,
+            "Invoice paid",
+          );
+        }
       }
     } catch (err) {
       console.error("Failed to update invoice:", err);
@@ -838,7 +1005,7 @@ const ServiceRequestsTab = ({
 
   const handleViewRequest = (requestId) => {
     if (!requestId) return;
-    setMenuOpen(null);
+    closeMenu();
     setUpdatePlanModal(null);
     setCreditModal(null);
     setInvoiceModal({
@@ -875,6 +1042,10 @@ const ServiceRequestsTab = ({
             isPaused: shouldPause,
             pausedAt: shouldPause ? new Date().toISOString() : null,
           });
+          await recordTimelineEvent(
+            request.id,
+            shouldPause ? "Website paused" : "Website resumed",
+          );
           closeConfirm();
           showConfirm({
             title: shouldPause ? "Paused" : "Resumed",
@@ -883,7 +1054,7 @@ const ServiceRequestsTab = ({
               : "Website billing updates are active again.",
             cancelLabel: "OK",
           });
-          setMenuOpen(null);
+          closeMenu();
         } catch (err) {
           console.error("Failed to update pause state:", err);
           closeConfirm();
@@ -1060,6 +1231,10 @@ const ServiceRequestsTab = ({
       billingCycle: request.billingCycle || "Monthly",
       requirements: request.requirements || "",
       projectReference: request.projectReference || "",
+      source: request.source || "",
+      customMonthlyPrice: request.customMonthlyPrice || "",
+      buildCost: request.buildCost || "",
+      acceptedTerms: request.acceptedTerms !== false,
       billingStartDate: request.billingStartDate ? request.billingStartDate.slice(0, 10) : "",
       billingEndDate: request.billingEndDate ? request.billingEndDate.slice(0, 10) : "",
     });
@@ -1277,7 +1452,8 @@ const ServiceRequestsTab = ({
   // MANAGEMENT ACTIONS
   const updateStatus = async (id, newStatus) => {
     await onUpdateStatus(id, { requesterStatus: newStatus });
-    setMenuOpen(null);
+    await recordTimelineEvent(id, `Status changed to ${newStatus}`);
+    closeMenu();
   };
 
   const handleMakeLive = async (request) => {
@@ -1308,7 +1484,8 @@ const ServiceRequestsTab = ({
       liveDate: new Date().toISOString(),
       renewalDate: renewalDate.toISOString(),
     });
-    setMenuOpen(null);
+    await recordTimelineEvent(request.id, "Project went live");
+    closeMenu();
   };
 
   const confirmUpdatePlan = async () => {
@@ -1637,18 +1814,24 @@ const ServiceRequestsTab = ({
             <div className="card-header">
               <h3>{request.name}</h3>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {isPaused && (
-                  <span
-                    className="badge"
-                    style={{
-                      background: "rgba(168, 85, 247, 0.18)",
-                      border: "1px solid #a855f7",
-                      color: "#e9d5ff",
-                    }}
-                  >
-                    PAUSED
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                {request.lifecyclePhase && (
+                  <span className={`lifecycle-badge lifecycle-${request.lifecyclePhase}`}>
+                    {LIFECYCLE_PHASES.find(p => p.value === request.lifecyclePhase)?.label || request.lifecyclePhase}
                   </span>
+                )}
+                {request.websiteStatus && (
+                  <span className={`website-badge website-${request.websiteStatus}`}>
+                    {WEBSITE_STATUSES.find(w => w.value === request.websiteStatus)?.label || request.websiteStatus}
+                  </span>
+                )}
+                {request.paymentStatus && (
+                  <span className={`payment-badge payment-${request.paymentStatus}`}>
+                    {PAYMENT_STATUSES.find(p => p.value === request.paymentStatus)?.label || request.paymentStatus}
+                  </span>
+                )}
+                {isPaused && (
+                  <span className="badge lifecycle-paused">PAUSED</span>
                 )}
                 {showBillingBadge && (
                   <span
@@ -1669,109 +1852,35 @@ const ServiceRequestsTab = ({
                 <span className={`badge ${srcClass}`}>{src}</span>
 
                 <div className="menu-container">
-                  <span
-                    className="menu-icon"
-                    onClick={() => toggleMenu(index)}
-                    style={{ cursor: "pointer", fontSize: "1.5rem" }}
-                  >
-                    &#x22EE;
-                  </span>
-
-                  {menuOpen === index && (
-                    <div className="menu-dropdown">
-                      {/* PIPELINE ACTIONS */}
-                      {!(
-                        request.requesterStatus &&
-                        String(request.requesterStatus).toLowerCase() ===
-                          "active"
-                      ) && (
-                        <>
-                          <span
-                            className="menu-item"
-                            onClick={() =>
-                              updateStatus(request.id, "Negotiating")
-                            }
-                          >
-                            Negotiating
-                          </span>
-                          <span
-                            className="menu-item"
-                            onClick={() => updateStatus(request.id, "Building")}
-                          >
-                            Building
-                          </span>
-                          <span
-                            className="menu-item"
-                            onClick={() =>
-                              updateStatus(request.id, "In Review")
-                            }
-                          >
-                            In Review
-                          </span>
-                        </>
+                  <span className="menu-icon" onClick={(e) => toggleMenu(index, e)}>&#x22EE;</span>
+                  {menuOpen === index && menuPos && (
+                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left }}>
+                      <div className="menu-section-label">Project</div>
+                      <span className="menu-item" onClick={() => handleEditRequest(request)}>View / Edit Details</span>
+                      <span className="menu-item" onClick={() => handleUpdatePlan(request)}>Update Plan</span>
+                      {!isLive && !isBillingExpired && (
+                        <span className="menu-item success" onClick={() => handleMakeLive(request)}>Go Live</span>
                       )}
-                      {request.plan &&
-                        String(request.plan).toLowerCase() !==
-                          "to be discussed" && (
-                          <span
-                            className="menu-item"
-                            onClick={() => handleMakeLive(request)}
-                            style={{ color: "#10b981" }}
-                          >
-                            Go Live (Paid)
-                          </span>
-                        )}
                       <hr className="menu-divider" />
-                      <span
-                        className="menu-item"
-                        onClick={() => handlePauseWebsite(request, !isPaused)}
-                        style={{ color: isPaused ? "#22c55e" : "#f59e0b" }}
-                      >
+                      <div className="menu-section-label">Status</div>
+                      <span className="menu-item" onClick={() => updateStatus(request.id, "Negotiating")}>Negotiating</span>
+                      <span className="menu-item" onClick={() => updateStatus(request.id, "Building")}>Building</span>
+                      <span className="menu-item" onClick={() => updateStatus(request.id, "In Review")}>In Review</span>
+                      <hr className="menu-divider" />
+                      <div className="menu-section-label">Website</div>
+                      <span className="menu-item" onClick={() => handlePauseWebsite(request, !isPaused)}
+                        style={{ color: isPaused ? "#22c55e" : "#f59e0b" }}>
                         {isPaused ? "Resume Website" : "Pause Website"}
                       </span>
-                      <span
-                        className="menu-item"
-                        onClick={() => handleOpenCreditModal(request)}
-                        style={{ color: "#fbbf24" }}
-                      >
-                        Manage Credits
-                      </span>
-                      <span
-                        className="menu-item"
-                        onClick={() => handleClearPlan(request)}
-                      >
-                        Clear Plan Details
-                      </span>
-                      <span
-                        className="menu-item"
-                        onClick={() => handleEditRequest(request)}
-                      >
-                        Edit Request
-                      </span>
-                      <span
-                        className="menu-item"
-                        onClick={() => handleUpdatePlan(request)}
-                      >
-                        Update Plan
-                      </span>
-                      {request.requesterStatus &&
-                        String(request.requesterStatus).toLowerCase() ===
-                          "active" && (
-                          <span
-                            className="menu-item"
-                            onClick={() => handleRemoveUser(request)}
-                            style={{ color: "#ef4444" }}
-                          >
-                            Remove User
-                          </span>
-                        )}
-                      <span
-                        className="menu-item"
-                        onClick={() => onDelete(request.id)}
-                        style={{ color: "red" }}
-                      >
-                        Delete Request
-                      </span>
+                      <hr className="menu-divider" />
+                      <div className="menu-section-label">Billing</div>
+                      <span className="menu-item warning" onClick={() => handleOpenCreditModal(request)}>Manage Credits</span>
+                      <span className="menu-item" onClick={() => handleClearPlan(request)}>Clear Plan Details</span>
+                      {request.requesterStatus && String(request.requesterStatus).toLowerCase() === "active" && (
+                        <span className="menu-item danger" onClick={() => handleRemoveUser(request)}>Remove User</span>
+                      )}
+                      <hr className="menu-divider" />
+                      <span className="menu-item danger" onClick={() => onDelete(request.id)}>Delete Request</span>
                     </div>
                   )}
                 </div>
@@ -1980,6 +2089,13 @@ const ServiceRequestsTab = ({
                               {formatDateOnly(invoice.billingStartDate) || "—"}{" "}
                               to {formatDateOnly(invoice.billingEndDate) || "—"}
                             </div>
+                            {invoice.clientOrganization && <div style={{ color: "#94a3b8", fontSize: "0.85rem", marginTop: 4 }}>{invoice.clientOrganization}</div>}
+                            {invoice.clientEmail && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>{invoice.clientEmail}</div>}
+                            {invoicePaid && invoice.paymentMethod && (
+                              <div style={{ color: "#86efac", fontSize: "0.82rem", marginTop: 4 }}>
+                                Paid via {invoice.paymentMethod}{invoice.transactionReference ? ` (${invoice.transactionReference})` : ""}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -2092,7 +2208,7 @@ const ServiceRequestsTab = ({
               </label>
             )}
 
-            {showWebsiteBuildingOption && includesWebsiteBuilding && (
+            {showWebsiteBuildingOption && includesWebsiteBuilding && request.plan !== "Custom Plan" && !String(request.billingCycle || "").toLowerCase().includes("year") && (
               <div
                 style={{
                   padding: "10px 12px",
@@ -2104,7 +2220,10 @@ const ServiceRequestsTab = ({
                   fontWeight: 600,
                 }}
               >
-                First Month Free (Website Build Included)
+                First Month Free*
+                <div style={{ fontSize: "0.72rem", fontWeight: 400, color: "#a7f3d0", marginTop: 2 }}>
+                  *only applicable for Monthly and Quarterly plans if we build your site
+                </div>
               </div>
             )}
 
@@ -2384,6 +2503,33 @@ const ServiceRequestsTab = ({
                   value={invoiceModal.draft.clientEmail}
                   onChange={(e) =>
                     updateInvoiceDraft("clientEmail", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Client Phone
+                <input
+                  value={invoiceModal.draft.clientPhone}
+                  onChange={(e) =>
+                    updateInvoiceDraft("clientPhone", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Client Organization
+                <input
+                  value={invoiceModal.draft.clientOrganization}
+                  onChange={(e) =>
+                    updateInvoiceDraft("clientOrganization", e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Project Name
+                <input
+                  value={invoiceModal.draft.projectName}
+                  onChange={(e) =>
+                    updateInvoiceDraft("projectName", e.target.value)
                   }
                 />
               </label>
@@ -2760,7 +2906,7 @@ const ServiceRequestsTab = ({
         >
           <div
             className="modal-content"
-            style={{ maxWidth: 520, width: "100%" }}
+            style={{ maxWidth: 520, width: "100%", maxHeight: "86vh", overflowY: "auto" }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ margin: "0 0 16px", color: "#fbbf24" }}>Create Custom Request</h3>
@@ -2987,7 +3133,7 @@ const ServiceRequestsTab = ({
         >
           <div
             className="modal-content"
-            style={{ maxWidth: 520, width: "100%" }}
+            style={{ maxWidth: 520, width: "100%", maxHeight: "86vh", overflowY: "auto" }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ margin: "0 0 16px", color: "#fbbf24" }}>Edit Request</h3>
@@ -3017,6 +3163,14 @@ const ServiceRequestsTab = ({
 
               <input className="search-input" placeholder="Project Reference" value={editForm.projectReference} onChange={(e) => setEditForm({ ...editForm, projectReference: e.target.value })} style={{ width: "100%" }} />
 
+              <input className="search-input" placeholder="Source" value={editForm.source} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })} style={{ width: "100%" }} />
+              <input className="search-input" placeholder="Custom Monthly Price" value={editForm.customMonthlyPrice} onChange={(e) => setEditForm({ ...editForm, customMonthlyPrice: e.target.value })} style={{ width: "100%" }} />
+              <input className="search-input" placeholder="Build Cost" value={editForm.buildCost} onChange={(e) => setEditForm({ ...editForm, buildCost: e.target.value })} style={{ width: "100%" }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#c4b5fd", fontSize: "0.9rem" }}>
+                <input type="checkbox" checked={editForm.acceptedTerms} onChange={(e) => setEditForm({ ...editForm, acceptedTerms: e.target.checked })} style={{ width: 16, height: 16 }} />
+                Accepted Terms
+              </label>
+
               <textarea className="search-input" placeholder="Requirements" value={editForm.requirements} onChange={(e) => setEditForm({ ...editForm, requirements: e.target.value })} rows={3} style={{ width: "100%", resize: "vertical" }} />
             </div>
 
@@ -3043,6 +3197,10 @@ const ServiceRequestsTab = ({
                       billingStartDate: editForm.billingStartDate ? new Date(editForm.billingStartDate).toISOString() : "",
                       billingEndDate: editForm.billingEndDate ? new Date(editForm.billingEndDate).toISOString() : "",
                       projectReference: editForm.projectReference,
+                      source: editForm.source,
+                      customMonthlyPrice: editForm.customMonthlyPrice,
+                      buildCost: editForm.buildCost,
+                      acceptedTerms: editForm.acceptedTerms,
                       requirements: editForm.requirements,
                     };
                     await updateDoc(doc(db, "serviceRequests", editModal.request.id), updates);

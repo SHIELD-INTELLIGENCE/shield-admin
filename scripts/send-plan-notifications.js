@@ -12,6 +12,7 @@ const resend = new Resend(RESEND_API_KEY);
 
 const RAW_SENDER = process.env.SENDER_EMAIL || "notification@shieldintelligence.in";
 const FROM_EMAIL = RAW_SENDER.includes("<") ? RAW_SENDER : `SHIELD Intelligence <${RAW_SENDER}>`;
+const CLIENT_URL = (process.env.CLIENT_URL || "https://shieldintelligence.in").replace(/\/+$/, "");
 
 function getDaysRemaining(endDate) {
   const now = new Date();
@@ -31,34 +32,46 @@ function formatDate(dateStr) {
   });
 }
 
-function buildEmail(name, plan, endDate, daysRemaining) {
+function buildEmail(name, plan, endDate, daysRemaining, clientUrl, extra) {
+  const cycle = extra?.billingCycle || "";
+  const amount = extra?.amount ? `₹${Number(extra.amount).toLocaleString("en-IN")}` : null;
+  const cycleSuffix = cycle ? ` / ${cycle.toLowerCase().replace("ly", "").replace("er", "")}` : "";
+
   let subject;
   if (daysRemaining <= 0) {
-    subject = `${plan} — Plan Expired`;
+    subject = amount ? `${plan}${cycleSuffix} — Expired (${amount})` : `${plan} — Plan Expired`;
   } else if (daysRemaining <= 2) {
-    subject = `${plan} — Expiring in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`;
+    subject = amount ? `${plan}${cycleSuffix} — ${daysRemaining}d left (${amount})` : `${plan} — Expiring in ${daysRemaining}d`;
   } else {
-    subject = `${plan} — Expiring Soon`;
+    subject = amount ? `${plan}${cycleSuffix} — ${daysRemaining}d left (${amount})` : `${plan} — Expiring Soon`;
   }
+
+  const amountRow = amount
+    ? `<tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Amount</span><br><span style="color:#f0f0f0;font-size:16px;font-weight:700;">${amount}${cycleSuffix}</span></td></tr>`
+    : "";
+  const billingCycleRow = cycle
+    ? `<tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Billing Cycle</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${cycle}</span></td></tr>`
+    : "";
 
   const body =
     daysRemaining <= 0
       ? {
           heading: "Plan Expired",
-          message: `Your <strong>${plan}</strong> has expired. If you believe this is an error or would like to discuss renewal options, please reach out to us.`,
+          message: `Your <strong>${plan}${cycleSuffix}</strong> has expired. Please renew via your dashboard to restore service.`,
           extra: "If you have already renewed, please disregard this notice.",
         }
       : {
           heading: `Expiring in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`,
-          message: `Your <strong>${plan}</strong> is set to expire on <strong>${formatDate(endDate)}</strong>. To avoid any disruption, please get in touch with us.`,
+          message: `Your <strong>${plan}${cycleSuffix}</strong> is set to expire on <strong>${formatDate(endDate)}</strong>. Renew now to avoid any disruption.`,
           extra:
             daysRemaining <= 2
-              ? "Please reach out soon to ensure uninterrupted service."
-              : "You can contact us anytime before the expiration date.",
+              ? "Please renew soon to ensure uninterrupted service."
+              : "You can renew anytime before the expiration date.",
         };
 
-  const actionLabel = daysRemaining <= 0 ? "Contact Us" : "Get in Touch";
-  const actionLink = "mailto:queriesshield@gmail.com";
+  const baseUrl = clientUrl || CLIENT_URL;
+  const actionLabel = daysRemaining <= 0 ? "Pay Now" : "Renew Now";
+  const actionLink = `${baseUrl}/dashboard`;
 
   const html = `
 <!DOCTYPE html>
@@ -91,8 +104,10 @@ function buildEmail(name, plan, endDate, daysRemaining) {
               <!-- Details box -->
               <table role="presentation" width="100%" cellpadding="14" cellspacing="0" style="background:rgba(202,169,76,0.05);border-radius:12px;border:1px solid rgba(202,169,76,0.18);margin-bottom:28px;">
                 <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Plan</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${plan}</span></td></tr>
+                ${amountRow}
+                ${billingCycleRow}
                 <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Billing End</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${formatDate(endDate)}</span></td></tr>
-                <tr><td style="padding:12px 16px;"><span style="color:#888;font-size:13px;">Status</span><br><span style="color:${daysRemaining <= 0 ? "#ef4444" : "#caa94c"};font-size:16px;font-weight:700;">${daysRemaining <= 0 ? "Expired" : `Active — ${daysRemaining} day${daysRemaining > 1 ? "s" : ""} remaining`}</span></td></tr>
+                <tr><td style="padding:12px 16px;"><span style="color:#888;font-size:13px;">Days Remaining</span><br><span style="color:${daysRemaining <= 0 ? "#ef4444" : "#caa94c"};font-size:16px;font-weight:700;">${daysRemaining <= 0 ? "Expired" : `${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`}</span></td></tr>
               </table>
               <!-- CTA -->
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -171,7 +186,9 @@ async function main() {
       data.name || "Client",
       data.plan || "your plan",
       data.billingEndDate,
-      days
+      days,
+      data.clientUrl,
+      { billingCycle: data.billingCycle, amount: data.customMonthlyPrice || data.planPrice }
     );
 
     try {
@@ -201,7 +218,213 @@ async function main() {
     }
   }
 
-  console.log(`Done. Sent: ${sent}, Skipped: ${skipped}`);
+  // ── Enterprise Billing Expiry (same logic as SR) ──
+  console.log("Checking enterprise billing expiry...");
+
+  const enterpriseBillingSnapshot = await db.collection("enterpriseConsultations").get();
+  let entBillSent = 0;
+  let entBillSkipped = 0;
+
+  for (const doc of enterpriseBillingSnapshot.docs) {
+    const data = { id: doc.id, ...doc.data() };
+
+    if (!data.billingEndDate || !data.email) {
+      console.log(`SKIP (ER billing): ${data.companyName || data.contactPerson || "unknown"} — missing billingEndDate or email`);
+      entBillSkipped++;
+      continue;
+    }
+
+    const days = getDaysRemaining(data.billingEndDate);
+    const lastAlert = data.lastAlertType || null;
+
+    console.log(`CHECK (ER billing): ${data.companyName || data.contactPerson} — billingEndDate=${data.billingEndDate}, days=${days}, lastAlert=${lastAlert}`);
+
+    let alertType = null;
+
+    if (!Number.isFinite(days)) {
+      console.log(`SKIP (ER billing): ${data.companyName || data.contactPerson} — invalid date (days=${days})`);
+      entBillSkipped++;
+      continue;
+    }
+
+    if (days <= 0 && lastAlert !== "expired") {
+      alertType = "expired";
+    } else if (days <= 2 && lastAlert !== "expired" && lastAlert !== "2_day") {
+      alertType = "2_day";
+    } else if (days <= 5 && lastAlert !== "expired" && lastAlert !== "2_day" && lastAlert !== "5_day") {
+      alertType = "5_day";
+    } else if (days <= 7 && lastAlert !== "expired" && lastAlert !== "2_day" && lastAlert !== "5_day" && lastAlert !== "7_day") {
+      alertType = "7_day";
+    }
+
+    if (!alertType) {
+      console.log(`SKIP (ER billing): ${data.companyName || data.contactPerson} — no matching alert (days=${days}, lastAlert=${lastAlert})`);
+      entBillSkipped++;
+      continue;
+    }
+
+    const { subject, html } = buildEmail(
+      data.contactPerson || data.companyName || "Client",
+      data.plan || "Enterprise",
+      data.billingEndDate,
+      days,
+      data.clientUrl,
+      { billingCycle: data.billingCycle, amount: data.customMonthlyPrice || data.planPrice }
+    );
+
+    try {
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: data.email,
+        subject,
+        html,
+      });
+
+      console.log(`[ER-billing][${alertType}] Resend response:`, JSON.stringify(result));
+
+      if (!result || result.error) {
+        console.error(`[ER-billing][${alertType}] Resend returned error:`, result?.error);
+        continue;
+      }
+
+      await db.collection("enterpriseConsultations").doc(doc.id).update({
+        lastAlertType: alertType,
+        lastAlertSentAt: new Date().toISOString(),
+      });
+
+      console.log(`[ER-billing][${alertType}] Email sent to ${data.email} (${data.companyName || data.contactPerson}) — ${data.plan || "Enterprise"}, id=${result.id || "unknown"}`);
+      entBillSent++;
+    } catch (err) {
+      console.error(`Failed to send ER billing email to ${data.email}:`, err);
+    }
+  }
+
+  // ── Enterprise Pending Consultation Notifications ──
+  console.log("Checking enterprise consultations...");
+
+  const enterpriseSnapshot = await db.collection("enterpriseConsultations").get();
+  let enterpriseSent = 0;
+  let enterpriseSkipped = 0;
+  const now = new Date();
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+  for (const doc of enterpriseSnapshot.docs) {
+    const data = { id: doc.id, ...doc.data() };
+
+    if (data.status !== "pending") {
+      enterpriseSkipped++;
+      continue;
+    }
+
+    if (!data.createdAt || !data.email) {
+      enterpriseSkipped++;
+      continue;
+    }
+
+    const createdAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+    const daysPending = (now.getTime() - createdAt.getTime()) / SEVEN_DAYS_MS;
+
+    if (daysPending < 1) {
+      enterpriseSkipped++;
+      continue;
+    }
+
+    const alertType = data.enterpriseAlertType || null;
+    if (alertType === "7_day_pending" && daysPending < 2) {
+      enterpriseSkipped++;
+      continue;
+    }
+    if (alertType === "14_day_pending" && daysPending < 3) {
+      enterpriseSkipped++;
+      continue;
+    }
+
+    const pendingDays = Math.floor(daysPending * 7);
+    let newAlertType;
+    if (pendingDays >= 14) {
+      newAlertType = "14_day_pending";
+    } else if (pendingDays >= 7) {
+      newAlertType = "7_day_pending";
+    } else {
+      enterpriseSkipped++;
+      continue;
+    }
+
+    if (alertType === newAlertType) {
+      enterpriseSkipped++;
+      continue;
+    }
+
+    const enterpriseSubject = `Enterprise Consultation Pending — ${data.companyName || "Unknown"}`;
+    const enterpriseHtml = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#121212;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#121212;">
+    <tr>
+      <td align="center" style="padding:40px 20px;">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#1a1a1a;border-radius:16px;border:2px solid rgba(202,169,76,0.3);box-shadow:0 0 40px rgba(202,169,76,0.15);">
+          <tr>
+            <td align="center" style="padding:36px 32px 12px;">
+              <img src="https://shieldintelligence.in/logo512.png" alt="SHIELD Intelligence" width="100" height="100" style="display:block;margin:0 auto 12px;border-radius:12px;" />
+              <h1 style="margin:0;font-size:26px;font-weight:900;color:#caa94c;letter-spacing:3px;">SHIELD INTELLIGENCE</h1>
+            </td>
+          </tr>
+          <tr><td style="padding:0 32px;"><div style="height:2px;background:linear-gradient(90deg,transparent,rgba(202,169,76,0.5),transparent);"></div></td></tr>
+          <tr>
+            <td style="padding:32px 32px;">
+              <p style="margin:0 0 10px;font-size:15px;color:#aaa;">Admin Notification,</p>
+              <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#caa94c;">Enterprise Consultation Pending</h2>
+              <p style="margin:0 0 10px;font-size:15px;color:#d4d4d4;line-height:1.7;">An enterprise consultation request from <strong>${data.companyName || "Unknown"}</strong> has been pending for <strong>${pendingDays} days</strong>.</p>
+              <table role="presentation" width="100%" cellpadding="14" cellspacing="0" style="background:rgba(202,169,76,0.05);border-radius:12px;border:1px solid rgba(202,169,76,0.18);margin-bottom:28px;">
+                <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Company</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${data.companyName || "—"}</span></td></tr>
+                <tr><td style="padding:12px 16px;border-bottom:1px solid rgba(202,169,76,0.1);"><span style="color:#888;font-size:13px;">Contact</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${data.contactPerson || "—"} (${data.email || "—"})</span></td></tr>
+                <tr><td style="padding:12px 16px;"><span style="color:#888;font-size:13px;">Project</span><br><span style="color:#f0f0f0;font-size:15px;font-weight:600;">${data.projectTitle || "—"}</span></td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:0 32px 32px;">
+              <div style="height:1px;background:rgba(202,169,76,0.15);margin-bottom:16px;"></div>
+              <p style="margin:0;font-size:11px;color:#666;">This is an automated notification from SHIELD Intelligence.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    try {
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: data.email,
+        subject: enterpriseSubject,
+        html: enterpriseHtml,
+      });
+
+      if (!result || result.error) {
+        console.error(`[Enterprise] Resend returned error:`, result?.error);
+        continue;
+      }
+
+      await db.collection("enterpriseConsultations").doc(doc.id).update({
+        enterpriseAlertType: newAlertType,
+        enterpriseAlertSentAt: new Date().toISOString(),
+      });
+
+      console.log(`[Enterprise] Pending notification sent to ${data.email} (${data.companyName}) — ${pendingDays} days pending`);
+      enterpriseSent++;
+    } catch (err) {
+      console.error(`Failed to send enterprise notification to ${data.email}:`, err);
+    }
+  }
+
+  console.log(`Enterprise Pending — Sent: ${enterpriseSent}, Skipped: ${enterpriseSkipped}`);
+  console.log(`Enterprise Billing — Sent: ${entBillSent}, Skipped: ${entBillSkipped}`);
+  console.log(`Done. Service — Sent: ${sent}, Skipped: ${skipped} | ER Pending — Sent: ${enterpriseSent}, Skipped: ${enterpriseSkipped} | ER Billing — Sent: ${entBillSent}, Skipped: ${entBillSkipped}`);
   process.exit(0);
 }
 

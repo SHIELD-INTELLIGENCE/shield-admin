@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import FeedsTab from "../Tabs/FeedsTab.jsx";
 import UsersTab from "../Tabs//UsersTab.jsx";
 import JoinApplicationsTab from "../Tabs/JoinApplicationsTab.jsx";
 import ServiceRequestsTab from "../Tabs/ServiceRequestsTab.jsx";
+import EnterpriseRequestsTab from "../Tabs/EnterpriseRequestsTab.jsx";
 import "../global.css";
 
-import { auth, db, usersCollection, invoicesCollection } from "../firebase.js";
+import { auth, db, usersCollection, invoicesCollection, enterpriseConsultationsCollection } from "../firebase.js";
 
 import { doc, getDoc, getDocs, limit, query, where, collection, onSnapshot, deleteDoc, updateDoc } from "firebase/firestore";
 
@@ -124,6 +124,7 @@ async function isAuthUserAdmin(user) {
 export default function App() {
   const [joinApplicationsData, setJoinApplicationsData] = useState([]);
   const [serviceRequestsData, setServiceRequestsData] = useState([]);
+  const [enterpriseConsultationsData, setEnterpriseConsultationsData] = useState([]);
   const [invoicesData, setInvoicesData] = useState([]);
   const [loggedIn, setLoggedIn] = useState(false);
   const [password, setPassword] = useState("");
@@ -236,10 +237,31 @@ export default function App() {
       }
     );
 
+    const unsubEnterprise = onSnapshot(
+      enterpriseConsultationsCollection,
+      (snap) => {
+        const arr = snap.docs.map((d) => {
+          const dd = d.data() || {};
+          return {
+            id: d.id,
+            ...dd,
+            createdAt: dd.createdAt && typeof dd.createdAt.toDate === "function"
+              ? dd.createdAt.toDate().toISOString()
+              : dd.createdAt || new Date().toISOString(),
+          };
+        });
+        setEnterpriseConsultationsData(arr);
+      },
+      (err) => {
+        console.error("enterpriseConsultations snapshot error:", err);
+      }
+    );
+
     return () => {
       try { unsubJoin(); } catch (e) {}
       try { unsubServ(); } catch (e) {}
       try { unsubInvoices(); } catch (e) {}
+      try { unsubEnterprise(); } catch (e) {}
     };
   }, []);
 
@@ -273,7 +295,7 @@ export default function App() {
         const ok = await isAuthUserAdmin(user);
         if (ok) {
           setLoggedIn(true);
-          setActiveTab("feeds");
+          setActiveTab("users");
         } else {
           await signOut(auth);
           setLoggedIn(false);
@@ -433,7 +455,7 @@ export default function App() {
     setPassword("");
     setEmail("");
     setNotice("");
-    setActiveTab("feeds");
+    setActiveTab("");
   }
 
   async function handleDeleteJoinApplication(id) {
@@ -517,7 +539,7 @@ export default function App() {
 
   if (checkingSession) {
     return (
-      <div style={{ maxWidth: 400, marginLeft: "auto", marginRight: "auto", marginTop: 50 }}>
+      <div id="login-screen" style={{ maxWidth: 400, margin: "50px auto 0" }}>
         <p>Checking session...</p>
       </div>
     );
@@ -525,10 +547,7 @@ export default function App() {
 
   if (!loggedIn) {
     return (
-      <div
-        id="login-screen"
-        style={{ maxWidth: 400, marginLeft: "auto", marginRight: "auto", marginTop: 50 }}
-      >
+      <div id="login-screen" style={{ maxWidth: 400, margin: "50px auto 0" }}>
         <h2>Admin Login</h2>
         <input
           type="email"
@@ -570,13 +589,11 @@ export default function App() {
     <div
       id="dashboard-screen"
       style={{
-        maxWidth: 900,
-        margin: "auto",
-        minHeight: "calc(100vh - 48px)",
         display: "flex",
         flexDirection: "column",
       }}
     >
+      <div style={{ maxWidth: "var(--content-max-width, 1400px)", margin: "0 auto", width: "100%" }}>
       <h1>SHIELD Admin Panel</h1>
 
       <section style={{ marginBottom: 16, padding: 14, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10, background: "rgba(17,24,39,0.45)" }}>
@@ -657,14 +674,6 @@ export default function App() {
 
       <nav style={{ marginBottom: 20 }} className="tabs" role="tablist" aria-label="Main tabs">
         <button
-          className={`tab-button ${activeTab === "feeds" ? "active" : ""}`}
-          aria-pressed={activeTab === "feeds"}
-          onClick={() => toggleTab("feeds")}
-        >
-          Feeds
-        </button>
-
-        <button
           className={`tab-button ${activeTab === "users" ? "active" : ""}`}
           aria-pressed={activeTab === "users"}
           onClick={() => toggleTab("users")}
@@ -685,6 +694,13 @@ export default function App() {
         >
           Service Requests
         </button>
+        <button
+          className={`tab-button ${activeTab === "enterpriseRequests" ? "active" : ""}`}
+          aria-pressed={activeTab === "enterpriseRequests"}
+          onClick={() => toggleTab("enterpriseRequests")}
+        >
+          Enterprise Requests
+        </button>
       </nav>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -692,11 +708,9 @@ export default function App() {
       </div>
 
       <div style={{ flex: 1 }}>
-        {activeTab === "feeds" && <FeedsTab />}
-
-        {activeTab === "users" && <UsersTab />}
+        {activeTab === "users" && <UsersTab serviceRequestsData={serviceRequestsData} enterpriseConsultationsData={enterpriseConsultationsData} invoicesData={invoicesData} />}
         {activeTab === "joinApplications" && (
-          <JoinApplicationsTab data={joinApplicationsData} onDelete={handleDeleteJoinApplication} />
+          <JoinApplicationsTab data={joinApplicationsData} onDelete={handleDeleteJoinApplication} onUpdateStatus={handleUpdateStatus} />
         )}
         {activeTab === "serviceRequests" && (
           <ServiceRequestsTab 
@@ -708,6 +722,13 @@ export default function App() {
             focusRequestId={focusRequestId}
           />
         )}
+        {activeTab === "enterpriseRequests" && (
+          <EnterpriseRequestsTab
+            data={enterpriseConsultationsData}
+            invoicesData={invoicesData}
+          />
+        )}
+      </div>
       </div>
     </div>
   );

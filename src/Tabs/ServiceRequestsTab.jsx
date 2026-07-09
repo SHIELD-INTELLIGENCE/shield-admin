@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import "../global.css";
 import CustomDropdown from "../components/CustomDropdown.jsx";
 import ConfirmModal from "../components/ConfirmModal.jsx";
@@ -479,7 +479,25 @@ const ServiceRequestsTab = ({
 }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
-  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); };
+  const menuTriggerRef = useRef(null);
+  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); menuTriggerRef.current = null; };
+  const recalcMenu = () => {
+    if (!menuTriggerRef.current) return;
+    const rect = menuTriggerRef.current.getBoundingClientRect();
+    const menuW = 220;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuW;
+    if (left < 8) left = 8;
+    if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
+    setMenuPos({ top, left });
+  };
 
   const recordTimelineEvent = async (requestId, action, notes = "") => {
     if (!requestId) return;
@@ -554,13 +572,20 @@ const ServiceRequestsTab = ({
 
   const toggleMenu = (index, event) => {
     if (menuOpen === index) { closeMenu(); return; }
+    menuTriggerRef.current = event.currentTarget;
     const rect = event.currentTarget.getBoundingClientRect();
     const menuW = 220;
     let top = rect.bottom + 4;
     let left = rect.right - menuW;
     if (left < 8) left = 8;
     if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
-    if (top + 300 > window.innerHeight) top = rect.top - 4;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
     setMenuPos({ top, left });
     setMenuOpen(index);
   };
@@ -572,15 +597,13 @@ const ServiceRequestsTab = ({
         closeMenu();
       }
     };
-    const handleScroll = () => {
-      closeMenu();
-    };
+    const handleScroll = () => recalcMenu();
     document.addEventListener("mousedown", handleClick);
-    document.addEventListener("scroll", handleScroll, true);
+    document.addEventListener("scroll", recalcMenu, true);
     window.addEventListener("resize", closeMenu);
     return () => {
       document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("scroll", handleScroll, true);
+      document.removeEventListener("scroll", recalcMenu, true);
       window.removeEventListener("resize", closeMenu);
     };
   }, [menuOpen, menuPos]);
@@ -1854,7 +1877,7 @@ const ServiceRequestsTab = ({
                 <div className="menu-container">
                   <span className="menu-icon" onClick={(e) => toggleMenu(index, e)}>&#x22EE;</span>
                   {menuOpen === index && menuPos && (
-                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left }}>
+                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left, maxHeight: `min(500px, ${window.innerHeight - menuPos.top - 8}px)` }}>
                       <div className="menu-section-label">Project</div>
                       <span className="menu-item" onClick={() => handleEditRequest(request)}>View / Edit Details</span>
                       <span className="menu-item" onClick={() => handleUpdatePlan(request)}>Update Plan</span>
@@ -2208,24 +2231,28 @@ const ServiceRequestsTab = ({
               </label>
             )}
 
-            {showWebsiteBuildingOption && includesWebsiteBuilding && request.plan !== "Custom Plan" && !String(request.billingCycle || "").toLowerCase().includes("year") && (
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  background: "rgba(16, 185, 129, 0.12)",
-                  border: "1px solid rgba(16, 185, 129, 0.25)",
-                  marginBottom: "10px",
-                  color: "#d1fae5",
-                  fontWeight: 600,
-                }}
-              >
-                First Month Free*
-                <div style={{ fontSize: "0.72rem", fontWeight: 400, color: "#a7f3d0", marginTop: 2 }}>
-                  *only applicable for Monthly and Quarterly plans if we build your site
+            {showWebsiteBuildingOption && includesWebsiteBuilding && (() => {
+              const bc = String(request.billingCycle || "").toLowerCase();
+              const period = bc.includes("year") ? "Year" : bc.includes("quarter") ? "Quarter" : "Month";
+              return (
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    background: "rgba(16, 185, 129, 0.12)",
+                    border: "1px solid rgba(16, 185, 129, 0.25)",
+                    marginBottom: "10px",
+                    color: "#d1fae5",
+                    fontWeight: 600,
+                  }}
+                >
+                  First {period} Free*
+                  <div style={{ fontSize: "0.72rem", fontWeight: 400, color: "#a7f3d0", marginTop: 2 }}>
+                    *only if we build your site from scratch
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {request.plan &&
               TIER_LIMITS[request.plan] &&

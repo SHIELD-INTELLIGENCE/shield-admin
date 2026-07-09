@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import "../global.css";
 import CustomDropdown from "../components/CustomDropdown.jsx";
 import ConfirmModal from "../components/ConfirmModal.jsx";
@@ -186,7 +186,25 @@ const EnterpriseRequestsTab = ({
       setRequestCredits((prev) => ({ ...prev, ...map }));
   }, [data]);
 
-  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); };
+  const menuTriggerRef = useRef(null);
+  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); menuTriggerRef.current = null; };
+  const recalcMenu = () => {
+    if (!menuTriggerRef.current) return;
+    const rect = menuTriggerRef.current.getBoundingClientRect();
+    const menuW = 220;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuW;
+    if (left < 8) left = 8;
+    if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
+    setMenuPos({ top, left });
+  };
 
   const recordTimelineEvent = async (requestId, action, notes = "") => {
     if (!requestId || !action) return;
@@ -206,13 +224,20 @@ const EnterpriseRequestsTab = ({
 
   const toggleMenu = (index, event) => {
     if (menuOpen === index) { closeMenu(); return; }
+    menuTriggerRef.current = event.currentTarget;
     const rect = event.currentTarget.getBoundingClientRect();
     const menuW = 220;
     let top = rect.bottom + 4;
     let left = rect.right - menuW;
     if (left < 8) left = 8;
     if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
-    if (top + 300 > window.innerHeight) top = rect.top - 4;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
     setMenuPos({ top, left });
     setMenuOpen(index);
   };
@@ -224,13 +249,12 @@ const EnterpriseRequestsTab = ({
         closeMenu();
       }
     };
-    const handleScroll = () => { closeMenu(); };
     document.addEventListener("mousedown", handleClick);
-    document.addEventListener("scroll", handleScroll, true);
+    document.addEventListener("scroll", recalcMenu, true);
     window.addEventListener("resize", closeMenu);
     return () => {
       document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("scroll", handleScroll, true);
+      document.removeEventListener("scroll", recalcMenu, true);
       window.removeEventListener("resize", closeMenu);
     };
   }, [menuOpen, menuPos]);
@@ -854,6 +878,27 @@ const flatPriorityLabels = {
 
   const openGenerateInvoiceModal = (request) => {
     if (!request?.id) return;
+    const existing = (invoicesByEnterpriseRequest[request.id] || []).find(
+      (inv) => String(inv.status || "unpaid").toLowerCase() !== "paid"
+    );
+    if (existing) {
+      showConfirm({
+        title: "Unpaid Invoice Exists",
+        message: `Invoice ${existing.invoiceId || "—"} for ${existing.clientName || "this client"} is still unpaid. Generate another?`,
+        onConfirm: () => {
+          setInvoiceModal({
+            open: true,
+            mode: "generate",
+            requestId: request.id,
+            draft: getEnterpriseInvoiceDraft(request),
+            saving: false,
+          });
+        },
+        confirmLabel: "Generate Anyway",
+        cancelLabel: "Cancel",
+      });
+      return;
+    }
     setInvoiceModal({
       open: true,
       mode: "generate",
@@ -974,49 +1019,35 @@ const flatPriorityLabels = {
     }
   };
 
-  const handleCopyInvoiceId = (invoice) => {
-    const text = invoice.invoiceId || "";
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
+  const copyToClipboard = async (text, successMessage) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      showConfirm({ title: "Done", message: successMessage, cancelLabel: "OK" });
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+      showConfirm({ title: "Error", message: "Failed to copy. Please try again.", cancelLabel: "OK" });
     }
-    showConfirm({ title: "Done", message: "Invoice ID copied.", cancelLabel: "OK" });
+  };
+
+  const handleCopyInvoiceId = (invoice) => {
+    copyToClipboard(invoice.invoiceId || "", "Invoice ID copied.");
   };
 
   const handleCopyInvoiceMessage = (invoice) => {
-    const text = buildInvoiceMessage(invoice);
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-    showConfirm({ title: "Done", message: "Client message copied.", cancelLabel: "OK" });
+    copyToClipboard(buildInvoiceMessage(invoice), "Client message copied.");
   };
 
   const handleCopyShortInvoiceMessage = (invoice) => {
-    const text = buildShortInvoiceMessage(invoice);
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-    showConfirm({ title: "Done", message: "Short message copied.", cancelLabel: "OK" });
+    copyToClipboard(buildShortInvoiceMessage(invoice), "Short message copied.");
   };
 
   const handleDownloadInvoice = async (invoice) => {
@@ -1400,7 +1431,7 @@ const flatPriorityLabels = {
                 <div className="menu-container">
                   <span className="menu-icon" onClick={(e) => toggleMenu(index, e)}>&#x22EE;</span>
                   {menuOpen === index && menuPos && (
-                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left }}>
+                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left, maxHeight: `min(500px, ${window.innerHeight - menuPos.top - 8}px)` }}>
                       <div className="menu-section-label">Project</div>
                       <span className="menu-item" onClick={() => { closeMenu(); handleEditRequest(item); }}>View / Edit Details</span>
                       <hr className="menu-divider" />
@@ -1510,6 +1541,38 @@ const flatPriorityLabels = {
                 {item.notes && (
                   <p style={{ whiteSpace: "pre-wrap" }}><strong>Notes:</strong> <span className="value">{item.notes}</span></p>
                 )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    background: item.firstYearFree ? "rgba(16, 185, 129, 0.12)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${item.firstYearFree ? "rgba(16, 185, 129, 0.25)" : "rgba(255,255,255,0.1)"}`,
+                    margin: "12px 0",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => {
+                    updateEnterpriseDoc(item.id, { firstYearFree: !item.firstYearFree });
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!item.firstYearFree}
+                    onChange={() => {}}
+                    style={{ width: 18, height: 18, cursor: "pointer", accentColor: "#22c55e" }}
+                  />
+                  <div>
+                    <span style={{ color: item.firstYearFree ? "#d1fae5" : "#9ca3af", fontWeight: 600 }}>
+                      First Year Free
+                    </span>
+                    <div style={{ fontSize: "0.72rem", fontWeight: 400, color: item.firstYearFree ? "#a7f3d0" : "#6b7280", marginTop: 2 }}>
+                      *only if we build your site from scratch
+                    </div>
+                  </div>
+                </div>
 
                 <div style={{ margin: "14px 0", padding: 12, borderRadius: 10, border: "1px solid rgba(96,165,250,0.25)", background: "rgba(37,99,235,0.08)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>

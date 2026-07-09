@@ -246,7 +246,7 @@ select {
   background-color: #4b0082; /* Dark purple background */
   color: #ffffff; /* White text */
   border: 2px solid #8a2be2; /* Bright purple border */
-  border-radius: 5px; /* Rounded corners */
+  border-radius: 6px; /* Rounded corners */
   padding: 10px;
   font-size: 16px;
   outline: none;
@@ -277,14 +277,17 @@ option {
 .search-input {
   padding: 8px 10px;
   border-radius: 6px;
-  border: 1px solid #ddd;
+  border: 1px solid #5b21b6;
+  background: #140b1e;
+  color: #e9d5ff;
   min-width: 220px;
 }
 .select {
   padding: 8px 10px;
   border-radius: 6px;
-  border: 1px solid #ddd;
-  background: white;
+  border: 1px solid #5b21b6;
+  background: #140b1e;
+  color: #e9d5ff;
 }
 .result-count {
   margin-left: auto;

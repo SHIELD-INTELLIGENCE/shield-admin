@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import '../global.css';
 import CustomDropdown from '../components/CustomDropdown.jsx';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -7,7 +7,25 @@ import { db } from '../firebase';
 const JoinApplicationsTab = ({ data = [], onDelete, onUpdateStatus }) => {
   const [menuOpen, setMenuOpen] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
-  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); };
+  const menuTriggerRef = useRef(null);
+  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); menuTriggerRef.current = null; };
+  const recalcMenu = () => {
+    if (!menuTriggerRef.current) return;
+    const rect = menuTriggerRef.current.getBoundingClientRect();
+    const menuW = 220;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuW;
+    if (left < 8) left = 8;
+    if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
+    setMenuPos({ top, left });
+  };
   const [query, setQuery] = useState('');
   const [filterSource, setFilterSource] = useState('any');
   const [filterAccepted, setFilterAccepted] = useState('any');
@@ -17,13 +35,20 @@ const JoinApplicationsTab = ({ data = [], onDelete, onUpdateStatus }) => {
 
   const toggleMenu = (index, event) => {
     if (menuOpen === index) { closeMenu(); return; }
+    menuTriggerRef.current = event.currentTarget;
     const rect = event.currentTarget.getBoundingClientRect();
     const menuW = 220;
     let top = rect.bottom + 4;
     let left = rect.right - menuW;
     if (left < 8) left = 8;
     if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
-    if (top + 300 > window.innerHeight) top = rect.top - 4;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
     setMenuPos({ top, left });
     setMenuOpen(index);
   };
@@ -35,13 +60,12 @@ const JoinApplicationsTab = ({ data = [], onDelete, onUpdateStatus }) => {
         closeMenu();
       }
     };
-    const handleScroll = () => { closeMenu(); };
     document.addEventListener("mousedown", handleClick);
-    document.addEventListener("scroll", handleScroll, true);
+    document.addEventListener("scroll", recalcMenu, true);
     window.addEventListener("resize", closeMenu);
     return () => {
       document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("scroll", handleScroll, true);
+      document.removeEventListener("scroll", recalcMenu, true);
       window.removeEventListener("resize", closeMenu);
     };
   }, [menuOpen, menuPos]);
@@ -191,7 +215,7 @@ const JoinApplicationsTab = ({ data = [], onDelete, onUpdateStatus }) => {
                   </span>
 
                   {menuOpen === index && menuPos && (
-                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left }}>
+                    <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left, maxHeight: `min(500px, ${window.innerHeight - menuPos.top - 8}px)` }}>
                       {/* RECRUITMENT PIPELINE */}
                       <span className="menu-item" onClick={() => updateAppStatus(application.id, 'Vetting')}>Move to Vetting</span>
                       <span className="menu-item" onClick={() => updateAppStatus(application.id, 'Interviewing')}>Interviewing</span>

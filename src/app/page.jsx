@@ -135,6 +135,7 @@ export default function App() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [focusRequestId, setFocusRequestId] = useState(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   function toggleTab(tabKey) {
     setActiveTab((prev) => (prev === tabKey ? "" : tabKey));
@@ -407,6 +408,18 @@ export default function App() {
     console.error("SHIELD Database Sync: Failed", error);
   }
 };
+  useEffect(() => {
+    if (!showLogoutConfirm) return;
+    const onKey = (e) => { if (e.key === "Escape") setShowLogoutConfirm(false); };
+    const onPop = () => setShowLogoutConfirm(false);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("popstate", onPop);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("popstate", onPop);
+    };
+  }, [showLogoutConfirm]);
+
   async function handleLogin() {
     if (isLoggingIn) return;
 
@@ -704,8 +717,21 @@ export default function App() {
       </nav>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
-        <button  onClick={handleLogout}>Logout</button>
+        <button onClick={() => setShowLogoutConfirm(true)}>Logout</button>
       </div>
+
+      {showLogoutConfirm && (
+        <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)}>
+          <div className="modal-content" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h3>Confirm Logout</h3>
+            <p style={{ color: "#cbd5e1", margin: "12px 0" }}>Are you sure you want to log out?</p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+              <button onClick={() => setShowLogoutConfirm(false)} style={{ background: "transparent", border: "1px solid #6b21a8" }}>Cancel</button>
+              <button onClick={handleLogout} style={{ background: "#7f1d1d", border: "1px solid #ef4444" }}>Log out</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1 }}>
         {activeTab === "users" && <UsersTab serviceRequestsData={serviceRequestsData} enterpriseConsultationsData={enterpriseConsultationsData} invoicesData={invoicesData} />}

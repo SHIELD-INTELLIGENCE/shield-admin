@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import Card from "../components/Card.jsx";
 import { usersCollection } from "../firebase.js";
 import CustomDropdown from "../components/CustomDropdown";
@@ -79,38 +79,62 @@ export default function UsersTab({ serviceRequestsData = [], enterpriseConsultat
   const [menuOpen, setMenuOpen] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
 
-  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); };
-
-  const toggleMenu = (key, event) => {
-    if (menuOpen === key) { closeMenu(); return; }
-    const rect = event.currentTarget.getBoundingClientRect();
-    const menuW = 200;
+  const menuTriggerRef = useRef(null);
+  const closeMenu = () => { setMenuOpen(null); setMenuPos(null); menuTriggerRef.current = null; };
+  const recalcMenu = () => {
+    if (!menuTriggerRef.current) return;
+    const rect = menuTriggerRef.current.getBoundingClientRect();
+    const menuW = 220;
     let top = rect.bottom + 4;
     let left = rect.right - menuW;
     if (left < 8) left = 8;
     if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
-    if (top + 250 > window.innerHeight) top = rect.top - 4;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
+    setMenuPos({ top, left });
+  };
+
+  const toggleMenu = (key, event) => {
+    if (menuOpen === key) { closeMenu(); return; }
+    menuTriggerRef.current = event.currentTarget;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuW = 220;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuW;
+    if (left < 8) left = 8;
+    if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
+    if (top + 400 > window.innerHeight) {
+      if (rect.top > 400) {
+        top = rect.top - 400 - 4;
+      } else {
+        top = 4;
+      }
+    }
     setMenuPos({ top, left });
     setMenuOpen(key);
   };
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !menuPos) return;
     const handleClick = (e) => {
       if (!e.target.closest(".menu-container") && !e.target.closest(".menu-dropdown")) {
         closeMenu();
       }
     };
-    const handleScroll = () => { closeMenu(); };
     document.addEventListener("mousedown", handleClick);
-    document.addEventListener("scroll", handleScroll, true);
+    document.addEventListener("scroll", recalcMenu, true);
     window.addEventListener("resize", closeMenu);
     return () => {
       document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("scroll", handleScroll, true);
+      document.removeEventListener("scroll", recalcMenu, true);
       window.removeEventListener("resize", closeMenu);
     };
-  }, [menuOpen]);
+  }, [menuOpen, menuPos]);
 
   const copyToClipboard = (text, label) => {
     if (navigator?.clipboard?.writeText) {
@@ -373,7 +397,7 @@ export default function UsersTab({ serviceRequestsData = [], enterpriseConsultat
                     <div className="menu-container" style={{ flexShrink: 0 }}>
                       <span className="menu-icon" onClick={(e) => toggleMenu(`sr-${r.id}`, e)}>&#x22EE;</span>
                       {menuOpen === `sr-${r.id}` && menuPos && (
-                        <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left }}>
+                        <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left, maxHeight: `min(500px, ${window.innerHeight - menuPos.top - 8}px)` }}>
                           <span className="menu-item" onClick={() => { closeMenu(); setAssignmentModal({ open: true, user: u }); }}>Manage</span>
                           <hr className="menu-divider" />
                           <span className="menu-item" onClick={() => { closeMenu(); copyToClipboard(r.id, "Request ID"); }}>Copy Request ID</span>
@@ -391,7 +415,7 @@ export default function UsersTab({ serviceRequestsData = [], enterpriseConsultat
                     <div className="menu-container" style={{ flexShrink: 0 }}>
                       <span className="menu-icon" onClick={(e) => toggleMenu(`er-${r.id}`, e)}>&#x22EE;</span>
                       {menuOpen === `er-${r.id}` && menuPos && (
-                        <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left }}>
+                        <div className="menu-dropdown" style={{ top: menuPos.top, left: menuPos.left, maxHeight: `min(500px, ${window.innerHeight - menuPos.top - 8}px)` }}>
                           <span className="menu-item" onClick={() => { closeMenu(); setAssignmentModal({ open: true, user: u }); }}>Manage</span>
                           <hr className="menu-divider" />
                           <span className="menu-item" onClick={() => { closeMenu(); copyToClipboard(r.id, "Request ID"); }}>Copy Request ID</span>
